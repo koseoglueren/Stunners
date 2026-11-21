@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
-import { audit, hasRole, requireRole, requireUser } from "@/lib/auth";
+import { audit, requireRole } from "@/lib/auth";
 import { fail, done, str } from "@/lib/forms";
 import { buildSettlementPreview } from "@/lib/settlement-data";
 
@@ -87,14 +87,8 @@ export async function deleteSettlement(id: string) {
 }
 
 export async function setTransferStatus(id: string, status: "PENDING" | "SENT" | "RECEIVED", backTo: string) {
-  const me = await requireUser();
+  const me = await requireRole("OFFICER");
   const t = await prisma.transfer.findUniqueOrThrow({ where: { id } });
-  const officer = hasRole(me, "OFFICER");
-  const allowed =
-    officer ||
-    (status === "SENT" && t.fromId === me.id) ||
-    (status === "RECEIVED" && t.toId === me.id);
-  if (!allowed) fail(backTo, "Bu ödemeyi güncelleme yetkin yok.");
   await prisma.transfer.update({
     where: { id },
     data: {

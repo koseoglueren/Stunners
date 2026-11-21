@@ -1,4 +1,4 @@
-import { noah, transferStatusLabel } from "@/lib/format";
+import { noah } from "@/lib/format";
 import type { CollectorRow } from "@/lib/collector-report";
 import { setTransferStatus } from "@/app/(app)/settlements/actions";
 import { Badge } from "./ui";
@@ -13,26 +13,18 @@ type Props = {
 };
 
 function Status({ t, live, who }: { t: NonNullable<CollectorRow["delivery"]>; live: NonNullable<Props["live"]>; who: "delivery" | "payout" }) {
-  const { me, officer, backTo } = live;
-  const status = (t.status ?? "PENDING") as keyof typeof transferStatusLabel;
-  const label = who === "delivery"
-    ? { PENDING: "Teslim bekleniyor", SENT: "Teslim etti", RECEIVED: "Teslim alındı" }[status]
-    : { PENDING: "Ödenmedi", SENT: "Ödendi", RECEIVED: "Aldı" }[status];
+  const done = t.status === "RECEIVED";
+  const label = who === "delivery" ? (done ? "Teslim alındı" : "Teslim bekleniyor") : done ? "Ödendi" : "Ödenmedi";
   return (
     <div className="flex flex-wrap items-center justify-end gap-1">
-      <Badge tone={status === "RECEIVED" ? "green" : status === "SENT" ? "gold" : "orange"}>{label}</Badge>
-      {t.id && status === "PENDING" && (officer || t.fromId === me) && (
-        <form action={setTransferStatus.bind(null, t.id, "SENT", backTo)}>
-          <SubmitButton className="btn-ghost btn-sm">{who === "delivery" ? "Teslim ettim" : "Ödedim"}</SubmitButton>
+      <Badge tone={done ? "green" : "orange"}>{label}</Badge>
+      {t.id && live.officer && !done && (
+        <form action={setTransferStatus.bind(null, t.id, "RECEIVED", live.backTo)}>
+          <SubmitButton className="btn-primary btn-sm">{who === "delivery" ? "Teslim aldım" : "Ödedim"}</SubmitButton>
         </form>
       )}
-      {t.id && status !== "RECEIVED" && (officer || t.toId === me) && (
-        <form action={setTransferStatus.bind(null, t.id, "RECEIVED", backTo)}>
-          <SubmitButton className="btn-primary btn-sm">{who === "delivery" ? "Teslim aldım" : "Aldım"}</SubmitButton>
-        </form>
-      )}
-      {t.id && status !== "PENDING" && officer && (
-        <form action={setTransferStatus.bind(null, t.id, "PENDING", backTo)}>
+      {t.id && live.officer && done && (
+        <form action={setTransferStatus.bind(null, t.id, "PENDING", live.backTo)}>
           <SubmitButton className="btn-ghost btn-sm">Geri al</SubmitButton>
         </form>
       )}

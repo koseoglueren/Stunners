@@ -2,9 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import type { LootCategory, User } from "@prisma/client";
+import type { LootCategory } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { audit, hasRole, requireRole, requireUser } from "@/lib/auth";
+import { audit, requireRole } from "@/lib/auth";
 import { categoryLabel, parseNoah } from "@/lib/format";
 import { done, fail, str } from "@/lib/forms";
 
@@ -20,12 +20,6 @@ function readDate(form: FormData, key: string) {
 async function isLocked(sessionId: string) {
   const n = await prisma.settlementSession.count({ where: { sessionId } });
   return n > 0;
-}
-
-async function canEditLoot(user: User, sessionId: string) {
-  if (hasRole(user, "OFFICER")) return true;
-  const m = await prisma.sessionMember.findUnique({ where: { sessionId_userId: { sessionId, userId: user.id } } });
-  return !!m;
 }
 
 export async function createSession(form: FormData) {
@@ -109,9 +103,8 @@ export async function deleteSession(id: string) {
 }
 
 export async function addLoot(sessionId: string, form: FormData) {
-  const me = await requireUser();
+  await requireRole("OFFICER");
   const path = `/farms/${sessionId}`;
-  if (!(await canEditLoot(me, sessionId))) fail(path, "Sadece ekip üyeleri veya yöneticiler loot girebilir.");
   const category = str(form, "category") as LootCategory;
   if (!CATEGORIES.includes(category)) fail(path, "Kategori seç.");
   const holderId = str(form, "holderId");
@@ -156,11 +149,10 @@ export async function addLoot(sessionId: string, form: FormData) {
 }
 
 async function loadLootForEdit(lootId: string) {
-  const me = await requireUser();
+  const me = await requireRole("OFFICER");
   const loot = await prisma.lootEntry.findUniqueOrThrow({ where: { id: lootId } });
   const path = `/farms/${loot.sessionId}`;
   if (loot.settlementId) fail(path, "Bu kayıt bir gün sonu hesabında kilitli.");
-  if (!hasRole(me, "OFFICER") && loot.holderId !== me.id) fail(path, "Bu kaydı sadece itemi tutan kişi veya yönetici değiştirebilir.");
   return { me, loot, path };
 }
 

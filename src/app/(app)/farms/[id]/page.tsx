@@ -42,9 +42,9 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
 
   const officer = hasRole(me, "OFFICER");
   const isMember = s.members.some((m) => m.userId === me.id);
-  const canAddLoot = officer || isMember;
   const locked = s.settlements.length > 0;
-  const [items, allMembers, locations] = await Promise.all([
+  const canAddLoot = officer && !locked;
+    const [items, allMembers, locations] = await Promise.all([
     prisma.itemCatalog.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     prisma.user.findMany({ where: { active: true }, orderBy: { characterName: "asc" } }),
     prisma.farmLocation.findMany({ orderBy: { name: "asc" } }),
@@ -205,7 +205,7 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
                   </thead>
                   <tbody>
                     {s.loot.map((l) => {
-                      const editable = !l.settlementId && (officer || l.holderId === me.id);
+                      const editable = officer && !l.settlementId;
                       return (
                         <tr key={l.id}>
                           <td>
