@@ -1,0 +1,215 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  LEADER
+  OFFICER
+  MEMBER
+}
+
+enum CharClass {
+  WARRIOR
+  ROGUE
+  MAGE
+  PRIEST
+  KURIAN
+}
+
+enum SessionStatus {
+  ACTIVE
+  FINISHED
+}
+
+enum LootCategory {
+  COIN
+  SCROLL
+  WEAPON
+  ARMOR
+  MATERIAL
+  OTHER
+}
+
+enum LootStatus {
+  COIN
+  IN_STOCK
+  SOLD
+  GIVEN
+}
+
+enum SettlementStatus {
+  DRAFT
+  LOCKED
+}
+
+enum TransferStatus {
+  PENDING
+  SENT
+  RECEIVED
+}
+
+model User {
+  id            String    @id @default(cuid())
+  username      String    @unique
+  passwordHash  String
+  characterName String
+  charClass     CharClass?
+  level         Int?
+  role          Role      @default(MEMBER)
+  active        Boolean   @default(true)
+  note          String?
+  joinedAt      DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessionsCreated FarmSession[]   @relation("SessionCreator")
+  memberships     SessionMember[]
+  lootHeld        LootEntry[]     @relation("LootHolder")
+  lootReceived    LootEntry[]     @relation("LootReceiver")
+  lootSold        LootEntry[]     @relation("LootSeller")
+  shares          SettlementShare[]
+  transfersOut    Transfer[]      @relation("TransferFrom")
+  transfersIn     Transfer[]      @relation("TransferTo")
+  settlements     Settlement[]
+  auditLogs       AuditLog[]
+}
+
+model FarmLocation {
+  id       String        @id @default(cuid())
+  name     String        @unique
+  active   Boolean       @default(true)
+  sessions FarmSession[]
+}
+
+model FarmSession {
+  id          String        @id @default(cuid())
+  title       String?
+  locationId  String
+  location    FarmLocation  @relation(fields: [locationId], references: [id])
+  startAt     DateTime
+  endAt       DateTime?
+  status      SessionStatus @default(ACTIVE)
+  note        String?
+  createdById String
+  createdBy   User          @relation("SessionCreator", fields: [createdById], references: [id])
+  createdAt   DateTime      @default(now())
+
+  members     SessionMember[]
+  loot        LootEntry[]
+  settlements SettlementSession[]
+}
+
+model SessionMember {
+  sessionId String
+  userId    String
+  session   FarmSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user      User        @relation(fields: [userId], references: [id])
+
+  @@id([sessionId, userId])
+}
+
+model ItemCatalog {
+  id           String       @id @default(cuid())
+  name         String       @unique
+  category     LootCategory
+  defaultPrice BigInt       @default(0)
+  active       Boolean      @default(true)
+  loot         LootEntry[]
+}
+
+model LootEntry {
+  id           String       @id @default(cuid())
+  sessionId    String
+  session      FarmSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  category     LootCategory
+  itemId       String?
+  item         ItemCatalog? @relation(fields: [itemId], references: [id])
+  itemName     String
+  plusLevel    Int?
+  quantity     Int          @default(1)
+  holderId     String
+  holder       User         @relation("LootHolder", fields: [holderId], references: [id])
+  /// Coin: total Noah. Items: estimated total value.
+  value        BigInt       @default(0)
+  status       LootStatus
+  salePrice    BigInt?
+  soldById     String?
+  soldBy       User?        @relation("LootSeller", fields: [soldById], references: [id])
+  soldAt       DateTime?
+  receiverId   String?
+  receiver     User?        @relation("LootReceiver", fields: [receiverId], references: [id])
+  note         String?
+  droppedAt    DateTime     @default(now())
+  settlementId String?
+  settlement   Settlement?  @relation(fields: [settlementId], references: [id])
+  createdAt    DateTime     @default(now())
+}
+
+model Settlement {
+  id          String           @id @default(cuid())
+  title       String
+  status      SettlementStatus @default(DRAFT)
+  total       BigInt           @default(0)
+  perShare    BigInt           @default(0)
+  remainder   BigInt           @default(0)
+  createdById String
+  createdBy   User             @relation(fields: [createdById], references: [id])
+  createdAt   DateTime         @default(now())
+  lockedAt    DateTime?
+
+  sessions  SettlementSession[]
+  loot      LootEntry[]
+  shares    SettlementShare[]
+  transfers Transfer[]
+}
+
+model SettlementSession {
+  settlementId String
+  sessionId    String
+  settlement   Settlement  @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+  session      FarmSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@id([settlementId, sessionId])
+}
+
+model SettlementShare {
+  id           String     @id @default(cuid())
+  settlementId String
+  settlement   Settlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User       @relation(fields: [userId], references: [id])
+  share        BigInt
+  held         BigInt
+  balance      BigInt
+
+  @@unique([settlementId, userId])
+}
+
+model Transfer {
+  id           String         @id @default(cuid())
+  settlementId String
+  settlement   Settlement     @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+  fromId       String
+  from         User           @relation("TransferFrom", fields: [fromId], references: [id])
+  toId         String
+  to           User           @relation("TransferTo", fields: [toId], references: [id])
+  amount       BigInt
+  status       TransferStatus @default(PENDING)
+  sentAt       DateTime?
+  receivedAt   DateTime?
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  detail    String?
+  createdAt DateTime @default(now())
+}
