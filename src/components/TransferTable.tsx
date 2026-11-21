@@ -1,5 +1,5 @@
 import type { Transfer, User } from "@prisma/client";
-import { noah, transferStatusLabel } from "@/lib/format";
+import { noah } from "@/lib/format";
 import { setTransferStatus } from "@/app/(app)/settlements/actions";
 import { Badge } from "./ui";
 import { SubmitButton } from "./client";
@@ -34,27 +34,19 @@ export function TransferTable({ transfers, me, officer, backTo, showSettlement }
                 <td className="text-mute">→</td>
                 <td className={t.toId === me ? "font-semibold text-gold" : ""}>{t.to.characterName}</td>
                 <td className="text-right font-medium">{noah(t.amount)}</td>
-                <td>
-                  <Badge tone={t.status === "RECEIVED" ? "green" : t.status === "SENT" ? "gold" : "orange"}>{transferStatusLabel[t.status]}</Badge>
+                <td className="whitespace-nowrap">
+                  {t.kind === "DELIVERY" && <span className="mr-1 text-xs text-mute">Teslim</span>}
+                  {t.kind === "PAYOUT" && <span className="mr-1 text-xs text-mute">Pay</span>}
+                  <Badge tone={t.status === "RECEIVED" ? "green" : "orange"}>{t.status === "RECEIVED" ? (t.kind === "DELIVERY" ? "Teslim alındı" : "Ödendi") : "Bekliyor"}</Badge>
                 </td>
                 <td className="text-right whitespace-nowrap">
-                  <div className="flex justify-end gap-1">
-                    {t.status === "PENDING" && (officer || t.fromId === me) && (
-                      <form action={setTransferStatus.bind(null, t.id, "SENT", backTo)}>
-                        <SubmitButton className="btn-ghost btn-sm">Gönderdim</SubmitButton>
-                      </form>
-                    )}
-                    {t.status !== "RECEIVED" && (officer || t.toId === me) && (
-                      <form action={setTransferStatus.bind(null, t.id, "RECEIVED", backTo)}>
-                        <SubmitButton className="btn-primary btn-sm">Aldım</SubmitButton>
-                      </form>
-                    )}
-                    {t.status !== "PENDING" && officer && (
-                      <form action={setTransferStatus.bind(null, t.id, "PENDING", backTo)}>
-                        <SubmitButton className="btn-ghost btn-sm">Geri al</SubmitButton>
-                      </form>
-                    )}
-                  </div>
+                  {officer && (
+                    <form action={setTransferStatus.bind(null, t.id, t.status === "RECEIVED" ? "PENDING" : "RECEIVED", backTo)}>
+                      <SubmitButton className={t.status === "RECEIVED" ? "btn-ghost btn-sm" : "btn-primary btn-sm"}>
+                        {t.status === "RECEIVED" ? "Geri al" : t.kind === "DELIVERY" ? "Teslim aldım" : "Ödendi"}
+                      </SubmitButton>
+                    </form>
+                  )}
                 </td>
               </tr>
             );

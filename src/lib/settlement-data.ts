@@ -3,7 +3,7 @@ import { prisma } from "./db";
 import { computeSettlement, lootContribution } from "./settlement";
 
 /** Loads sessions + their unsettled loot and computes the equal split preview. */
-export async function buildSettlementPreview(sessionIds: string[]) {
+export async function buildSettlementPreview(sessionIds: string[], collectorId?: string | null) {
   const sessions = await prisma.farmSession.findMany({
     where: { id: { in: sessionIds } },
     include: {
@@ -31,7 +31,10 @@ export async function buildSettlementPreview(sessionIds: string[]) {
     if (u) users.set(u.id, u);
   }
   const unsold = sessions.flatMap((s) => s.loot.filter((l) => l.status === "IN_STOCK"));
+  for (const l of unsold) users.set(l.holder.id, l.holder);
+  const collector = collectorId ? await prisma.user.findUnique({ where: { id: collectorId } }) : null;
+  if (collector) users.set(collector.id, collector);
   const active = sessions.filter((s) => s.status === "ACTIVE");
-  const result = computeSettlement(memberIds, included);
-  return { sessions, users, included, unsold, active, ...result };
+  const result = computeSettlement(memberIds, included, collector?.id ?? null);
+  return { sessions, users, included, unsold, active, collector, ...result };
 }

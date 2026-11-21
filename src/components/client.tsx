@@ -84,3 +84,25 @@ export function MobileMenu({ children }: { children: ReactNode }) {
     </div>
   );
 }
+
+export function CopyButton({ text, label = "Özeti kopyala" }: { text: string; label?: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      type="button"
+      className="btn-ghost"
+      title="Discord'a yapıştırmak için"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setDone(true);
+          setTimeout(() => setDone(false), 2000);
+        } catch {
+          /* clipboard blocked */
+        }
+      }}
+    >
+      {done ? "Kopyalandı" : label}
+    </button>
+  );
+}

@@ -7,9 +7,11 @@ import type { SearchParams } from "@/lib/forms";
 import { lootContribution } from "@/lib/settlement";
 import { PageHeader, Stat } from "@/components/ui";
 import { Flash } from "@/components/Flash";
-import { LocalTime, SubmitButton } from "@/components/client";
+import { CopyButton, LocalTime, SubmitButton } from "@/components/client";
 import { TransferTable } from "@/components/TransferTable";
 import { deleteSettlement } from "../actions";
+import { CollectorReport } from "@/components/CollectorReport";
+import { buildCollectorRows } from "@/lib/collector-report";
 
 export default async function SettlementPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: SearchParams }) {
   const me = await requireUser();
@@ -23,6 +25,8 @@ export default async function SettlementPage({ params, searchParams }: { params:
       shares: { include: { user: true } },
       transfers: { include: { from: true, to: true }, orderBy: { amount: "desc" } },
       loot: { include: { holder: true, soldBy: true, receiver: true } },
+      handover: true,
+      collector: true,
     },
   });
   if (!st) notFound();
@@ -30,13 +34,47 @@ export default async function SettlementPage({ params, searchParams }: { params:
     a.user.characterName.localeCompare(b.user.characterName, "tr"),
   );
   const path = `/settlements/${id}`;
+  const users = new Map<string, string>();
+  for (const s of st.shares) users.set(s.userId, s.user.characterName);
+  for (const t of st.transfers) {
+    users.set(t.fromId, t.from.characterName);
+    users.set(t.toId, t.to.characterName);
+  }
+  if (st.collector) users.set(st.collector.id, st.collector.characterName);
+  const name = (uid: string) => users.get(uid) ?? "?";
+  const collectorMode = st.mode === "COLLECTOR" && st.collectorId;
+  const rows = collectorMode
+    ? buildCollectorRows(st.collectorId!, st.shares, st.transfers, st.loot, st.handover)
+    : [];
+  const summary = collectorMode
+    ? [
+        `${st.title}: toplam ${noah(st.total)} Noah, kişi başı ${noah(st.perShare)}. Dağıtıcı: ${name(st.collectorId!)}`,
+        "Teslim:",
+        ...rows.filter((r) => r.delivery || r.items.length).map((r) => `- ${name(r.userId)}: ${r.delivery ? noah(r.delivery.amount) + " Noah" : ""}${r.items.length ? (r.delivery ? " + " : "") + r.items.join(", ") : ""}`),
+        "Ödeme:",
+        ...rows.filter((r) => r.payout).map((r) => `- ${name(r.userId)}: ${noah(r.payout!.amount)} Noah`),
+      ].join("\n")
+    : [
+        `${st.title}: toplam ${noah(st.total)} Noah, kişi başı ${noah(st.perShare)}.`,
+        ...st.transfers.map((t) => `- ${t.from.characterName} → ${t.to.characterName}: ${noah(t.amount)} Noah`),
+      ].join("\n");
 
   return (
     <>
       <PageHeader
         title={st.title}
-        subtitle={<>Kilitleyen: {st.createdBy.characterName} · <LocalTime value={st.lockedAt ?? st.createdAt} /></>}
-        actions={<Link href="/settlements" className="btn-ghost">← Hesaplar</Link>}
+        subtitle={
+          <>
+            {collectorMode && <>Dağıtıcı: <b className="text-gold">{name(st.collectorId!)}</b> · </>}
+            Kilitleyen: {st.createdBy.characterName} · <LocalTime value={st.lockedAt ?? st.createdAt} />
+          </>
+        }
+        actions={
+          <>
+            <CopyButton text={summary} />
+            <Link href="/settlements" className="btn-ghost">← Hesaplar</Link>
+          </>
+        }
       />
       <Flash sp={sp} />
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
@@ -45,17 +83,23 @@ export default async function SettlementPage({ params, searchParams }: { params:
         <Stat label="Katılımcı" value={shares.filter((s) => s.share > 0n).length} />
       </div>
 
-      <div className="card mb-6 p-0">
-        <h2 className="px-5 pt-5 font-semibold">Kim kime ne verecek</h2>
-        {st.transfers.length === 0 ? (
-          <p className="p-5 text-sm text-mute">Transfer gerekmiyor.</p>
-        ) : (
-          <TransferTable transfers={st.transfers} me={me.id} officer={hasRole(me, "OFFICER")} backTo={path} />
-        )}
-      </div>
+      {collectorMode ? (
+        <div className="mb-6">
+          <CollectorReport rows={rows} collectorId={st.collectorId!} name={name} live={{ me: me.id, officer: hasRole(me, "OFFICER"), backTo: path }} />
+        </div>
+      ) : (
+        <div className="card mb-6 p-0">
+          <h2 className="px-5 pt-5 font-semibold">Kim kime ne verecek</h2>
+          {st.transfers.length === 0 ? (
+            <p className="p-5 text-sm text-mute">Transfer gerekmiyor.</p>
+          ) : (
+            <TransferTable transfers={st.transfers} me={me.id} officer={hasRole(me, "OFFICER")} backTo={path} />
+          )}
+        </div>
+      )}
 
-      <div className="grid gap-6 xl:grid-cols-2">
-        <div className="card overflow-x-auto p-0">
+      <div className={collectorMode ? "grid gap-6 xl:grid-cols-3" : "grid gap-6 xl:grid-cols-2"}>
+        <div className={`card overflow-x-auto p-0 ${collectorMode ? "hidden" : ""}`}>
           <h2 className="px-5 pt-5 font-semibold">Paylar</h2>
           <table className="table mt-2">
             <thead>
@@ -80,7 +124,7 @@ export default async function SettlementPage({ params, searchParams }: { params:
             </tbody>
           </table>
         </div>
-        <div className="space-y-6">
+        <div className={collectorMode ? "contents" : "space-y-6"}>
           <div className="card">
             <h2 className="mb-2 font-semibold">Farmlar</h2>
             <ul className="space-y-1 text-sm">

@@ -18,6 +18,7 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
     include: {
       sessions: { include: { session: { include: { location: true } } } },
       transfers: true,
+      collector: true,
       _count: { select: { shares: true } },
     },
   });
@@ -39,6 +40,7 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
                 <th>Hesap</th>
                 <th>Tarih</th>
                 <th>Farmlar</th>
+                <th>Dağıtıcı</th>
                 <th className="text-right">Toplam</th>
                 <th className="text-right">Kişi başı</th>
                 <th>Ödemeler</th>
@@ -52,6 +54,7 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
                     <td><Link href={`/settlements/${s.id}`} className="font-medium hover:text-gold">{s.title}</Link></td>
                     <td className="text-mute"><LocalTime value={s.createdAt} /></td>
                     <td className="text-sm text-mute">{s.sessions.map((x) => x.session.location.name + (x.session.title ? ` (${x.session.title})` : "")).join(", ")}</td>
+                    <td>{s.collector?.characterName ?? <span className="text-mute">doğrudan</span>}</td>
                     <td className="text-right text-gold" title={noah(s.total)}>{noahShort(s.total)}</td>
                     <td className="text-right">{noahShort(s.perShare)} <span className="text-xs text-mute">× {s._count.shares}</span></td>
                     <td>{open === 0 ? <Badge tone="green">Tamamlandı</Badge> : <Badge tone="orange">{open} bekliyor</Badge>}</td>

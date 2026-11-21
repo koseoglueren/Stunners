@@ -48,6 +48,17 @@ enum SettlementStatus {
   LOCKED
 }
 
+enum SettlementMode {
+  COLLECTOR
+  DIRECT
+}
+
+enum TransferKind {
+  DELIVERY
+  PAYOUT
+  DIRECT
+}
+
 enum TransferStatus {
   PENDING
   SENT
@@ -77,6 +88,8 @@ model User {
   transfersOut    Transfer[]      @relation("TransferFrom")
   transfersIn     Transfer[]      @relation("TransferTo")
   settlements     Settlement[]
+  collecting      Settlement[]    @relation("SettlementCollector")
+  lootHandedOver  LootEntry[]     @relation("LootHandedOver")
   auditLogs       AuditLog[]
 }
 
@@ -147,7 +160,12 @@ model LootEntry {
   note         String?
   droppedAt    DateTime     @default(now())
   settlementId String?
-  settlement   Settlement?  @relation(fields: [settlementId], references: [id])
+  settlement   Settlement?  @relation("SettlementLoot", fields: [settlementId], references: [id])
+  /// unsold item physically handed to the collector at a settlement
+  handoverSettlementId String?
+  handoverSettlement   Settlement? @relation("SettlementHandover", fields: [handoverSettlementId], references: [id])
+  handedOverById       String?
+  handedOverBy         User?       @relation("LootHandedOver", fields: [handedOverById], references: [id])
   createdAt    DateTime     @default(now())
 }
 
@@ -155,6 +173,9 @@ model Settlement {
   id          String           @id @default(cuid())
   title       String
   status      SettlementStatus @default(DRAFT)
+  mode        SettlementMode   @default(DIRECT)
+  collectorId String?
+  collector   User?            @relation("SettlementCollector", fields: [collectorId], references: [id])
   total       BigInt           @default(0)
   perShare    BigInt           @default(0)
   remainder   BigInt           @default(0)
@@ -164,7 +185,8 @@ model Settlement {
   lockedAt    DateTime?
 
   sessions  SettlementSession[]
-  loot      LootEntry[]
+  loot      LootEntry[] @relation("SettlementLoot")
+  handover  LootEntry[] @relation("SettlementHandover")
   shares    SettlementShare[]
   transfers Transfer[]
 }
@@ -186,6 +208,8 @@ model SettlementShare {
   user         User       @relation(fields: [userId], references: [id])
   share        BigInt
   held         BigInt
+  /// value of items the member kept (deducted from their payout)
+  kept         BigInt     @default(0)
   balance      BigInt
 
   @@unique([settlementId, userId])
@@ -200,6 +224,7 @@ model Transfer {
   toId         String
   to           User           @relation("TransferTo", fields: [toId], references: [id])
   amount       BigInt
+  kind         TransferKind   @default(DIRECT)
   status       TransferStatus @default(PENDING)
   sentAt       DateTime?
   receivedAt   DateTime?
