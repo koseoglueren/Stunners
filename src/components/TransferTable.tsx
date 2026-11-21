@@ -34,7 +34,9 @@ export function TransferTable({ transfers, me, officer, backTo, showSettlement }
                 <td className="text-mute">→</td>
                 <td className={t.toId === me ? "font-semibold text-gold" : ""}>{t.to.characterName}</td>
                 <td className="text-right font-medium">{noah(t.amount)}</td>
-                <td>
+                <td className="whitespace-nowrap">
+                  {t.kind === "DELIVERY" && <span className="mr-1 text-xs text-mute">Teslim</span>}
+                  {t.kind === "PAYOUT" && <span className="mr-1 text-xs text-mute">Pay</span>}
                   <Badge tone={t.status === "RECEIVED" ? "green" : t.status === "SENT" ? "gold" : "orange"}>{transferStatusLabel[t.status]}</Badge>
                 </td>
                 <td className="text-right whitespace-nowrap">
