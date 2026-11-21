@@ -1,0 +1,81 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { prisma } from "@/lib/db";
+import { audit, hasRole, requireRole, requireUser } from "@/lib/auth";
+import { fail, done, str } from "@/lib/forms";
+import { buildSettlementPreview } from "@/lib/settlement-data";
+
+export async function createSettlement(form: FormData) {
+  const me = await requireRole("OFFICER");
+  const ids = form.getAll("sessionIds").map(String).filter(Boolean);
+  const back = `/settlements/new?${ids.map((i) => `oturum=${i}`).join("&")}`;
+  if (ids.length === 0) fail("/settlements/new", "En az bir farm seç.");
+  const p = await buildSettlementPreview(ids);
+  if (p.active.length) fail(back, "Devam eden farm var; önce farmı bitir.");
+  if (p.included.length === 0) fail(back, "Hesaplanacak coin veya satılmış item yok.");
+  const title = str(form, "title") || `Gün sonu ${new Date().toLocaleDateString("tr-TR", { timeZone: "Europe/Istanbul" })}`;
+
+  const settlement = await prisma.$transaction(async (tx) => {
+    // guard against a parallel lock of the same loot
+    const lootIds = p.included.map((i) => i.loot.id);
+    const stillFree = await tx.lootEntry.count({ where: { id: { in: lootIds }, settlementId: null } });
+    if (stillFree !== lootIds.length) throw new Error("Loot başka bir hesapta kilitlendi, sayfayı yenile.");
+    const st = await tx.settlement.create({
+      data: {
+        title,
+        status: "LOCKED",
+        total: p.total,
+        perShare: p.perShare,
+        remainder: p.remainder,
+        createdById: me.id,
+        lockedAt: new Date(),
+        sessions: { create: ids.map((sessionId) => ({ sessionId })) },
+        shares: { create: p.shares.map((s) => ({ userId: s.userId, share: s.share, held: s.held, balance: s.balance })) },
+        transfers: { create: p.transfers.map((t) => ({ fromId: t.fromId, toId: t.toId, amount: t.amount })) },
+      },
+    });
+    await tx.lootEntry.updateMany({ where: { id: { in: lootIds } }, data: { settlementId: st.id } });
+    return st;
+  });
+  await audit(me.id, "settlement_locked", `${title}: ${p.total} / ${p.shares.length} kişi`);
+  revalidatePath("/settlements");
+  redirect(`/settlements/${settlement.id}`);
+}
+
+export async function deleteSettlement(id: string) {
+  const me = await requireRole("LEADER");
+  const st = await prisma.settlement.findUniqueOrThrow({ where: { id }, include: { transfers: true } });
+  if (st.transfers.some((t) => t.status !== "PENDING"))
+    fail(`/settlements/${id}`, "Ödemesi başlamış hesap silinemez. Önce ödemeleri 'Bekliyor' durumuna al.");
+  await prisma.$transaction([
+    prisma.lootEntry.updateMany({ where: { settlementId: id }, data: { settlementId: null } }),
+    prisma.settlement.delete({ where: { id } }),
+  ]);
+  await audit(me.id, "settlement_deleted", st.title);
+  revalidatePath("/settlements");
+  done("/settlements", "Hesap silindi; loot kayıtları tekrar hesaplanabilir.");
+}
+
+export async function setTransferStatus(id: string, status: "PENDING" | "SENT" | "RECEIVED", backTo: string) {
+  const me = await requireUser();
+  const t = await prisma.transfer.findUniqueOrThrow({ where: { id } });
+  const officer = hasRole(me, "OFFICER");
+  const allowed =
+    officer ||
+    (status === "SENT" && t.fromId === me.id) ||
+    (status === "RECEIVED" && t.toId === me.id);
+  if (!allowed) fail(backTo, "Bu ödemeyi güncelleme yetkin yok.");
+  await prisma.transfer.update({
+    where: { id },
+    data: {
+      status,
+      sentAt: status === "PENDING" ? null : (t.sentAt ?? new Date()),
+      receivedAt: status === "RECEIVED" ? new Date() : null,
+    },
+  });
+  await audit(me.id, "transfer_" + status.toLowerCase(), `${t.amount} ${t.fromId}->${t.toId}`);
+  revalidatePath(backTo);
+  redirect(backTo);
+}

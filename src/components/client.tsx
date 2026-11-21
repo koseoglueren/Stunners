@@ -1,0 +1,86 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useEffect, useState, type ReactNode } from "react";
+import { useFormStatus } from "react-dom";
+
+export function SubmitButton({ children, className = "btn-primary", confirm: msg }: { children: ReactNode; className?: string; confirm?: string }) {
+  const { pending } = useFormStatus();
+  return (
+    <button
+      type="submit"
+      className={className}
+      disabled={pending}
+      onClick={(e) => {
+        if (msg && !window.confirm(msg)) e.preventDefault();
+      }}
+    >
+      {pending ? "..." : children}
+    </button>
+  );
+}
+
+const dtf = (opts: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("tr-TR", opts);
+
+/** Renders a date in the viewer's own time zone. */
+export function LocalTime({ value, mode = "datetime" }: { value: Date | string | null | undefined; mode?: "datetime" | "date" | "time" }) {
+  if (!value) return <>-</>;
+  const d = new Date(value);
+  const opts: Intl.DateTimeFormatOptions =
+    mode === "date"
+      ? { day: "2-digit", month: "short", year: "numeric" }
+      : mode === "time"
+        ? { hour: "2-digit", minute: "2-digit" }
+        : { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" };
+  return <time suppressHydrationWarning dateTime={d.toISOString()}>{dtf(opts).format(d)}</time>;
+}
+
+function toLocalInput(d: Date) {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** datetime-local input that submits an ISO string (so the server never guesses the time zone). */
+export function DateTimeInput({ name, defaultValue, required }: { name: string; defaultValue?: Date | string | null; required?: boolean }) {
+  const [local, setLocal] = useState("");
+  useEffect(() => {
+    setLocal(defaultValue ? toLocalInput(new Date(defaultValue)) : "");
+  }, [defaultValue]);
+  const iso = local ? new Date(local).toISOString() : "";
+  return (
+    <>
+      <input type="datetime-local" className="input" value={local} onChange={(e) => setLocal(e.target.value)} required={required} />
+      <input type="hidden" name={name} value={iso} />
+    </>
+  );
+}
+
+export function NavLink({ href, children }: { href: string; children: ReactNode }) {
+  const path = usePathname();
+  const active = href === "/" ? path === "/" : path.startsWith(href);
+  return (
+    <Link
+      href={href}
+      className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition ${
+        active ? "bg-gold/10 text-gold-2 ring-1 ring-gold/30" : "text-mute hover:bg-panel-2 hover:text-ink"
+      }`}
+    >
+      {children}
+    </Link>
+  );
+}
+
+export function MobileMenu({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const path = usePathname();
+  useEffect(() => setOpen(false), [path]);
+  return (
+    <div className="lg:hidden">
+      <button className="btn-ghost btn-sm" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        Menü
+      </button>
+      {open && <div className="absolute inset-x-0 top-16 z-40 border-b border-line bg-panel p-3">{children}</div>}
+    </div>
+  );
+}
