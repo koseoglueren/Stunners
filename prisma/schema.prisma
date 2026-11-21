@@ -138,8 +138,12 @@ model ItemCatalog {
 
 model LootEntry {
   id           String       @id @default(cuid())
-  sessionId    String
-  session      FarmSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  /// null = added to the clan vault by hand, not from a farm (clan property)
+  sessionId    String?
+  session      FarmSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  /// item is in the clan vault, waiting to be sold on the market
+  inVault      Boolean      @default(false)
+  vaultAt      DateTime?
   category     LootCategory
   itemId       String?
   item         ItemCatalog? @relation(fields: [itemId], references: [id])

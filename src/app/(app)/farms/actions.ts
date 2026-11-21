@@ -136,28 +136,42 @@ export async function addLoot(sessionId: string, form: FormData) {
         itemId,
         itemName,
         quantity: qty,
-        plusLevel: plus ? parseInt(plus, 10) : null,
+        plusLevel: plus !== "" ? Math.max(0, Math.min(15, parseInt(plus, 10) || 0)) : null,
         holderId,
         value: value ?? price * BigInt(qty),
         status: "IN_STOCK",
+        inVault: form.get("vault") === "on",
+        vaultAt: form.get("vault") === "on" ? new Date() : null,
         note: str(form, "note") || null,
       },
     });
   }
   revalidatePath(path);
+  revalidatePath("/vault");
   redirect(`${path}#loot`);
 }
 
-async function loadLootForEdit(lootId: string) {
+/** where to go after a loot action: the vault page if asked, else the loot's farm */
+function backPath(loot: { sessionId: string | null }, back?: string | null) {
+  if (back && back.startsWith("/") && !back.startsWith("//")) return back;
+  return loot.sessionId ? `/farms/${loot.sessionId}#loot` : "/vault";
+}
+
+async function loadLootForEdit(lootId: string, back?: string | null) {
   const me = await requireRole("OFFICER");
   const loot = await prisma.lootEntry.findUniqueOrThrow({ where: { id: lootId } });
-  const path = `/farms/${loot.sessionId}`;
+  const path = backPath(loot, back);
   if (loot.settlementId) fail(path, "Bu kayıt bir gün sonu hesabında kilitli.");
   return { me, loot, path };
 }
 
+function revalidateLoot(loot: { sessionId: string | null }) {
+  if (loot.sessionId) revalidatePath(`/farms/${loot.sessionId}`);
+  revalidatePath("/vault");
+}
+
 export async function sellLoot(lootId: string, form: FormData) {
-  const { me, loot, path } = await loadLootForEdit(lootId);
+  const { me, loot, path } = await loadLootForEdit(lootId, str(form, "back"));
   const price = parseNoah(str(form, "salePrice"));
   if (!price || price <= 0n) fail(path, "Satış fiyatını gir (örn. 45m).");
   const soldById = str(form, "soldById") || loot.holderId;
@@ -166,42 +180,103 @@ export async function sellLoot(lootId: string, form: FormData) {
     data: { status: "SOLD", salePrice: price, soldById, soldAt: new Date(), receiverId: null },
   });
   await audit(me.id, "loot_sold", `${loot.itemName} ${price}`);
-  revalidatePath(path);
-  revalidatePath("/stock");
-  redirect(`${path}#loot`);
+  revalidateLoot(loot);
+  redirect(path);
 }
 
 export async function giveLoot(lootId: string, form: FormData) {
-  const { me, loot, path } = await loadLootForEdit(lootId);
+  const { me, loot, path } = await loadLootForEdit(lootId, str(form, "back"));
   const receiverId = str(form, "receiverId");
   const value = parseNoah(str(form, "value"));
   if (!receiverId) fail(path, "Itemi alan üyeyi seç.");
   if (value === null || value < 0n) fail(path, "Itemin değerini gir; bu tutar alanın payından düşülür.");
   await prisma.lootEntry.update({
     where: { id: lootId },
-    data: { status: "GIVEN", receiverId, value, salePrice: null, soldById: null, soldAt: null },
+    data: { status: "GIVEN", receiverId, value, salePrice: null, soldById: null, soldAt: null, inVault: false },
   });
   await audit(me.id, "loot_given", `${loot.itemName} -> ${receiverId} (${value})`);
-  revalidatePath(path);
-  redirect(`${path}#loot`);
+  revalidateLoot(loot);
+  redirect(path);
 }
 
-export async function restockLoot(lootId: string) {
-  const { me, loot, path } = await loadLootForEdit(lootId);
+export async function restockLoot(lootId: string, back?: string) {
+  const { me, loot, path } = await loadLootForEdit(lootId, back);
   if (loot.status === "COIN") fail(path, "Coin kaydı stoğa alınamaz.");
   await prisma.lootEntry.update({
     where: { id: lootId },
     data: { status: "IN_STOCK", salePrice: null, soldById: null, soldAt: null, receiverId: null },
   });
   await audit(me.id, "loot_restocked", loot.itemName);
-  revalidatePath(path);
-  redirect(`${path}#loot`);
+  revalidateLoot(loot);
+  redirect(path);
 }
 
-export async function deleteLoot(lootId: string) {
-  const { me, loot, path } = await loadLootForEdit(lootId);
+export async function setLootVault(lootId: string, inVault: boolean, back?: string) {
+  const { me, loot, path } = await loadLootForEdit(lootId, back);
+  if (loot.status !== "IN_STOCK") fail(path, "Sadece satılmamış itemler clan kasasına girer.");
+  if (!inVault && !loot.sessionId) fail(path, "Elle eklenen item kasadan çıkarılamaz; satabilir veya silebilirsin.");
+  await prisma.lootEntry.update({ where: { id: lootId }, data: { inVault, vaultAt: inVault ? new Date() : null } });
+  await audit(me.id, inVault ? "vault_added" : "vault_removed", loot.itemName);
+  revalidateLoot(loot);
+  redirect(path);
+}
+
+export async function updateLootValue(lootId: string, form: FormData) {
+  const { me, loot, path } = await loadLootForEdit(lootId, str(form, "back"));
+  const value = parseNoah(str(form, "value"));
+  if (value === null) fail(path, "Geçerli bir değer gir.");
+  await prisma.lootEntry.update({ where: { id: lootId }, data: { value } });
+  await audit(me.id, "loot_value", `${loot.itemName} ${value}`);
+  revalidateLoot(loot);
+  redirect(path);
+}
+
+export async function deleteLoot(lootId: string, back?: string) {
+  const { me, loot, path } = await loadLootForEdit(lootId, back);
   await prisma.lootEntry.delete({ where: { id: lootId } });
   await audit(me.id, "loot_deleted", `${loot.itemName} x${loot.quantity} (${loot.value})`);
-  revalidatePath(path);
-  redirect(`${path}#loot`);
+  revalidateLoot(loot);
+  redirect(path);
+}
+
+/** Manual add straight into the clan vault, optionally tied to a farm (then its team shares the sale). */
+export async function addVaultItem(form: FormData) {
+  const me = await requireRole("OFFICER");
+  const category = str(form, "category") as LootCategory;
+  if (!CATEGORIES.includes(category) || category === "COIN") fail("/vault", "Kategori seç.");
+  const itemId = str(form, "itemId") || null;
+  let itemName = str(form, "itemName");
+  let price = 0n;
+  if (itemId) {
+    const item = await prisma.itemCatalog.findUnique({ where: { id: itemId } });
+    if (!item) fail("/vault", "Item bulunamadı.");
+    itemName = item.name;
+    price = item.defaultPrice;
+  }
+  if (!itemName) fail("/vault", "Item seç veya adını yaz.");
+  const qty = Math.max(1, parseInt(str(form, "quantity") || "1", 10) || 1);
+  const plus = str(form, "plusLevel");
+  const sessionId = str(form, "sessionId") || null;
+  const holderId = str(form, "holderId") || me.id;
+  const value = parseNoah(str(form, "value"));
+  await prisma.lootEntry.create({
+    data: {
+      sessionId,
+      category,
+      itemId,
+      itemName,
+      quantity: qty,
+      plusLevel: plus !== "" ? Math.max(0, Math.min(15, parseInt(plus, 10) || 0)) : null,
+      holderId,
+      value: value ?? price * BigInt(qty),
+      status: "IN_STOCK",
+      inVault: true,
+      vaultAt: new Date(),
+      note: str(form, "note") || null,
+    },
+  });
+  await audit(me.id, "vault_manual_add", itemName);
+  revalidatePath("/vault");
+  if (sessionId) revalidatePath(`/farms/${sessionId}`);
+  done("/vault", `${itemName} clan kasasına eklendi.`);
 }

@@ -19,6 +19,7 @@ import {
   reopenSession,
   restockLoot,
   sellLoot,
+  setLootVault,
   updateSession,
 } from "../actions";
 
@@ -61,6 +62,10 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
   const memberOpts = s.members.map((m) => ({ id: m.userId, name: m.user.characterName }));
   const allOpts = allMembers.map((m) => ({ id: m.id, name: m.characterName }));
   const unsettledLoot = s.loot.filter((l) => !l.settlementId && lootContribution(l));
+  const vaultItems = stock.filter((l) => l.inVault);
+  const vaultValue = vaultItems.reduce((a, l) => a + l.value, 0n);
+  const soldWaiting = s.loot.filter((l) => l.status === "SOLD" && !l.settlementId);
+  const soldWaitingTotal = soldWaiting.reduce((a, l) => a + (l.salePrice ?? 0n), 0n);
 
   return (
     <>
@@ -187,6 +192,51 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
             </div>
           )}
 
+          {(vaultItems.length > 0 || (locked && soldWaiting.length > 0)) && (
+            <div className="card border-warn/40" id="pazar">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="font-semibold">Pazarda satılmayı bekleyenler ({vaultItems.length})</h2>
+                <Link href="/vault" className="text-sm text-gold hover:underline">Clan kasası →</Link>
+              </div>
+              <p className="mb-3 text-sm text-mute">
+                Bu itemler <b className="text-ink">bu farmın {s.members.length} kişilik ekibine</b> aittir. Satıldığında para bu ekip arasında eşit dağıtılır:{" "}
+                <span className="text-ink">{s.members.map((m) => m.user.characterName).join(", ")}</span>.
+              </p>
+              {vaultItems.length > 0 && (
+                <ul className="divide-y divide-line text-sm">
+                  {vaultItems.map((l) => (
+                    <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                      <span>
+                        {l.itemName}
+                        {l.plusLevel !== null && <span className="text-gold"> +{l.plusLevel}</span>}
+                        {l.quantity > 1 && <span className="text-mute"> ×{l.quantity}</span>}
+                        <span className="text-xs text-mute"> · {l.holder.characterName} tutuyor</span>
+                      </span>
+                      <span className="text-mute">~{noah(l.value)}</span>
+                    </li>
+                  ))}
+                  <li className="flex justify-between py-2 font-medium">
+                    <span>Tahmini toplam</span>
+                    <span>~{noah(vaultValue)} · kişi başı ~{noahShort(vaultValue / n)}</span>
+                  </li>
+                </ul>
+              )}
+              {soldWaiting.length > 0 && (
+                <div className="mt-3 rounded-lg border border-good/40 bg-good/10 p-3 text-sm">
+                  <b>{soldWaiting.length} item satıldı, dağıtım bekliyor</b> ({noah(soldWaitingTotal)} Noah).{" "}
+                  {locked
+                    ? "Bu farmın hesabı daha önce yapıldığı için satış parası ek hesapla dağıtılır."
+                    : "Gün sonu hesabına otomatik girer."}
+                  {locked && officer && (
+                    <div className="mt-2">
+                      <Link href={`/settlements/new?oturum=${s.id}`} className="btn-primary btn-sm">Ek hesap yap</Link>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="card p-0" id="loot">
             <h2 className="px-5 pt-5 font-semibold">Düşenler ({s.loot.length})</h2>
             {s.loot.length === 0 ? (
@@ -238,7 +288,11 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
                             )}
                           </td>
                           <td>
-                            <Badge tone={statusTone[l.status]}>{lootStatusLabel[l.status]}</Badge>
+                            {l.status === "IN_STOCK" && l.inVault ? (
+                              <Badge tone="orange">Kasada · satış bekliyor</Badge>
+                            ) : (
+                              <Badge tone={statusTone[l.status]}>{lootStatusLabel[l.status]}</Badge>
+                            )}
                             {l.settlementId && <div className="mt-1 text-xs text-mute">hesaplandı</div>}
                           </td>
                           <td className="text-right">
@@ -271,13 +325,18 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
                                       <SubmitButton className="btn-ghost btn-sm w-full">Üyeye ver</SubmitButton>
                                     </form>
                                   )}
-                                  <div className="flex gap-2 border-t border-line pt-3">
+                                  <div className="flex flex-wrap gap-2 border-t border-line pt-3">
+                                    {l.status === "IN_STOCK" && (
+                                      <form action={setLootVault.bind(null, l.id, !l.inVault, undefined)}>
+                                        <SubmitButton className="btn-ghost btn-sm">{l.inVault ? "Kasadan çıkar" : "Clan kasasına ekle"}</SubmitButton>
+                                      </form>
+                                    )}
                                     {(l.status === "SOLD" || l.status === "GIVEN") && (
-                                      <form action={restockLoot.bind(null, l.id)}>
+                                      <form action={restockLoot.bind(null, l.id, undefined)}>
                                         <SubmitButton className="btn-ghost btn-sm">Satılmadı yap</SubmitButton>
                                       </form>
                                     )}
-                                    <form action={deleteLoot.bind(null, l.id)}>
+                                    <form action={deleteLoot.bind(null, l.id, undefined)}>
                                       <SubmitButton className="btn-danger btn-sm" confirm="Kayıt silinsin mi?">Sil</SubmitButton>
                                     </form>
                                   </div>

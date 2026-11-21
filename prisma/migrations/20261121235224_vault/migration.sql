@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "LootEntry" ADD COLUMN     "inVault" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN     "vaultAt" TIMESTAMP(3),
+ALTER COLUMN "sessionId" DROP NOT NULL;
