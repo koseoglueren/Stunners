@@ -20,7 +20,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Search
     prisma.transfer.aggregate({ where: { toId: me.id, status: { not: "RECEIVED" } }, _sum: { amount: true } }),
     prisma.lootEntry.findMany({ where: { status: { not: "COIN" } }, include: { holder: true, session: { include: { location: true } } }, orderBy: { droppedAt: "desc" }, take: 8 }),
     prisma.settlementShare.groupBy({ by: ["userId"], where: { settlement: { createdAt: { gte: since30 } } }, _sum: { share: true }, orderBy: { _sum: { share: "desc" } }, take: 5 }),
-    prisma.lootEntry.aggregate({ where: { status: "IN_STOCK" }, _sum: { value: true }, _count: true }),
+    prisma.lootEntry.aggregate({ where: { status: "IN_STOCK", inVault: true }, _sum: { value: true }, _count: true }),
   ]);
   const topUsers = await prisma.user.findMany({ where: { id: { in: top.map((t) => t.userId) } } });
   const nameOf = new Map(topUsers.map((u) => [u.id, u.characterName]));
@@ -34,7 +34,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Search
   }
   for (const l of loot14) {
     const c = lootContribution(l);
-    const day = days.find((x) => x.key === dayKey(l.session.startAt));
+    const day = days.find((x) => x.key === dayKey(l.session!.startAt));
     if (c && day) day.total += c.amount;
   }
   const week = days.slice(-7).reduce((a, d) => a + d.total, 0n);
@@ -48,7 +48,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Search
         <Stat label="Son 7 gün clan kazancı" value={noahShort(week)} hint={`${noah(week)} Noah`} accent />
         <Stat label="Toplam kazancın" value={noahShort(myShares._sum.share ?? 0n)} hint="kilitlenen hesaplardan" />
         <Stat label="Vermen gereken" value={noahShort(owe._sum.amount ?? 0n)} hint={<Link href="/transfers" className="text-gold">Ödemeler →</Link>} />
-        <Stat label="Alacağın" value={noahShort(owed._sum.amount ?? 0n)} hint={`Satılmayan stok: ${noahShort(stock._sum.value ?? 0n)} (${stock._count})`} />
+        <Stat label="Alacağın" value={noahShort(owed._sum.amount ?? 0n)} hint={<Link href="/vault" className="text-gold">Clan kasası: {noahShort(stock._sum.value ?? 0n)} ({stock._count} item) →</Link>} />
       </div>
 
       {active.length > 0 && (
@@ -115,7 +115,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Search
                   </td>
                   <td className="text-mute">{categoryLabel[l.category]}</td>
                   <td>{l.holder.characterName}</td>
-                  <td><Link href={`/farms/${l.sessionId}`} className="text-mute hover:text-gold">{l.session.location.name}</Link></td>
+                  <td>{l.session ? <Link href={`/farms/${l.sessionId}`} className="text-mute hover:text-gold">{l.session.location.name}</Link> : <Link href="/vault" className="text-mute hover:text-gold">Clan kasası</Link>}</td>
                   <td className="text-right text-mute"><LocalTime value={l.droppedAt} /></td>
                 </tr>
               ))}

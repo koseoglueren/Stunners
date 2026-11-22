@@ -15,6 +15,25 @@ const CATS: [string, string][] = [
   ["OTHER", "Diğer"],
 ];
 
+/** categories where a +level makes sense */
+export function hasLevel(cat: string) {
+  return cat === "WEAPON" || cat === "ARMOR" || cat === "OTHER";
+}
+
+export function PlusSelect({ defaultValue = "" }: { defaultValue?: string }) {
+  return (
+    <div>
+      <label className="label">+ Seviye</label>
+      <select name="plusLevel" className="input" defaultValue={defaultValue}>
+        <option value="">Yok</option>
+        {Array.from({ length: 16 }, (_, i) => (
+          <option key={i} value={i}>+{i}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 function fmt(n: bigint) {
   return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
 }
@@ -72,12 +91,7 @@ export function LootForm({
             <label className="label">Adet</label>
             <input name="quantity" type="number" min={1} className="input" value={qty} onChange={(e) => setQty(parseInt(e.target.value) || 1)} />
           </div>
-          {(cat === "WEAPON" || cat === "ARMOR") && (
-            <div>
-              <label className="label">+ Seviye</label>
-              <input name="plusLevel" type="number" min={0} max={15} className="input" placeholder="örn. 7" />
-            </div>
-          )}
+          {hasLevel(cat) && <PlusSelect />}
         </>
       )}
       <div className={isCoin ? "lg:col-span-2" : ""}>
@@ -97,10 +111,16 @@ export function LootForm({
           ))}
         </select>
       </div>
-      <div className="sm:col-span-2 lg:col-span-5">
+      <div className={isCoin ? "sm:col-span-2 lg:col-span-5" : "sm:col-span-2 lg:col-span-3"}>
         <label className="label">Not (isteğe bağlı)</label>
         <input name="note" className="input" placeholder="örn. boss drop" />
       </div>
+      {!isCoin && (
+        <label className="flex items-end gap-2 pb-2 text-sm sm:col-span-2 lg:col-span-2">
+          <input type="checkbox" name="vault" defaultChecked className="h-4 w-4 accent-gold" />
+          <span>Pazarda satılacak, clan kasasına ekle</span>
+        </label>
+      )}
       <div className="flex items-end">
         <SubmitButton className="btn-primary w-full">+ Kaydet</SubmitButton>
       </div>
