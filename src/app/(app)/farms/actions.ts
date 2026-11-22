@@ -338,3 +338,32 @@ export async function setMemberTimes(sessionId: string, userId: string, form: Fo
   revalidatePath(path);
   done(path, "Saatler güncellendi.");
 }
+
+/** several vault items sold at once: each selected item gets its own price */
+export async function sellMany(form: FormData) {
+  const me = await requireRole("OFFICER");
+  const ids = [...new Set(form.getAll("sel").map(String).filter(Boolean))];
+  if (ids.length === 0) fail("/vault", "Satılan itemleri seç.");
+  const soldById = str(form, "soldById") || me.id;
+  const loot = await prisma.lootEntry.findMany({ where: { id: { in: ids } } });
+  const updates: { id: string; price: bigint; name: string; sessionId: string | null }[] = [];
+  for (const l of loot) {
+    if (l.settlementId || l.status !== "IN_STOCK") fail("/vault", `${l.itemName} satılabilir durumda değil.`);
+    const price = parseNoah(str(form, `price_${l.id}`));
+    if (!price || price <= 0n) fail("/vault", `${l.itemName} için satış fiyatını gir.`);
+    updates.push({ id: l.id, price, name: l.itemName, sessionId: l.sessionId });
+  }
+  const now = new Date();
+  await prisma.$transaction(
+    updates.map((u) =>
+      prisma.lootEntry.update({
+        where: { id: u.id },
+        data: { status: "SOLD", salePrice: u.price, soldById, soldAt: now, receiverId: null },
+      }),
+    ),
+  );
+  await audit(me.id, "loot_sold_many", updates.map((u) => `${u.name} ${u.price}`).join(", "));
+  revalidatePath("/vault");
+  for (const sid of new Set(updates.map((u) => u.sessionId).filter(Boolean))) revalidatePath(`/farms/${sid}`);
+  done("/vault", `${updates.length} item satıldı olarak kaydedildi. Aşağıdan dağıtımı yapabilirsin.`);
+}

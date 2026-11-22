@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useFormStatus } from "react-dom";
 
 export function SubmitButton({ children, className = "btn-primary", confirm: msg }: { children: ReactNode; className?: string; confirm?: string }) {
@@ -104,5 +104,32 @@ export function CopyButton({ text, label = "Özeti kopyala" }: { text: string; l
     >
       {done ? "Kopyalandı" : label}
     </button>
+  );
+}
+
+/** "İşlem" button that opens its actions in a centered popup instead of a cramped dropdown */
+export function ActionMenu({ title, label = "İşlem", children }: { title: ReactNode; label?: string; children: ReactNode }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  return (
+    <>
+      <button type="button" className="btn-ghost btn-sm" onClick={() => ref.current?.showModal()}>
+        {label}
+      </button>
+      <dialog
+        ref={ref}
+        className="m-auto w-[min(26rem,calc(100vw-2rem))] rounded-xl border border-line bg-panel-2 p-0 text-left text-ink shadow-2xl backdrop:bg-black/70"
+        onClick={(e) => {
+          if (e.target === ref.current) ref.current?.close();
+        }}
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
+          <div className="font-semibold">{title}</div>
+          <button type="button" className="btn-ghost btn-sm" onClick={() => ref.current?.close()} aria-label="Kapat">
+            ✕
+          </button>
+        </div>
+        <div className="max-h-[75vh] space-y-3 overflow-y-auto p-4">{children}</div>
+      </dialog>
+    </>
   );
 }

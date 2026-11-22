@@ -18,7 +18,12 @@ export default async function Dashboard({ searchParams }: { searchParams: Search
     prisma.settlementShare.aggregate({ where: { userId: me.id }, _sum: { share: true } }),
     prisma.transfer.aggregate({ where: { fromId: me.id, status: "PENDING" }, _sum: { amount: true } }),
     prisma.transfer.aggregate({ where: { toId: me.id, status: { not: "RECEIVED" } }, _sum: { amount: true } }),
-    prisma.lootEntry.findMany({ where: { status: { not: "COIN" } }, include: { holder: true, session: { include: { location: true } } }, orderBy: { droppedAt: "desc" }, take: 8 }),
+    prisma.lootEntry.findMany({
+      where: { status: { not: "COIN" } },
+      include: { holder: true, handedOverBy: true, soldBy: true, receiver: true, session: { include: { location: true } } },
+      orderBy: { droppedAt: "desc" },
+      take: 10,
+    }),
     prisma.settlementShare.groupBy({ by: ["userId"], where: { settlement: { createdAt: { gte: since30 } } }, _sum: { share: true }, orderBy: { _sum: { share: "desc" } }, take: 5 }),
     prisma.lootEntry.aggregate({ where: { status: "IN_STOCK", inVault: true }, _sum: { value: true }, _count: true }),
   ]);
@@ -105,17 +110,39 @@ export default async function Dashboard({ searchParams }: { searchParams: Search
           <div className="p-5"><Empty>Henüz item düşmedi.</Empty></div>
         ) : (
           <table className="table mt-2">
+            <thead>
+              <tr>
+                <th>Item adı</th>
+                <th className="text-right">Adet</th>
+                <th>Hangi farm</th>
+                <th>Kime düştü</th>
+                <th>Şu an kimde</th>
+                <th className="text-right">Tarih</th>
+              </tr>
+            </thead>
             <tbody>
               {recentDrops.map((l) => (
                 <tr key={l.id}>
                   <td>
                     {l.itemName}
                     {l.plusLevel !== null && <span className="text-gold"> +{l.plusLevel}</span>}
-                    {l.quantity > 1 && <span className="text-mute"> ×{l.quantity}</span>}
+                    <div className="text-xs text-mute">{categoryLabel[l.category]}</div>
                   </td>
-                  <td className="text-mute">{categoryLabel[l.category]}</td>
-                  <td>{l.holder.characterName}</td>
-                  <td>{l.session ? <Link href={`/farms/${l.sessionId}`} className="text-mute hover:text-gold">{l.session.location.name}</Link> : <Link href="/vault" className="text-mute hover:text-gold">Clan kasası</Link>}</td>
+                  <td className="text-right">{l.quantity}</td>
+                  <td>{l.session ? <Link href={`/farms/${l.sessionId}`} className="text-mute hover:text-gold">{l.session.location.name}</Link> : "-"}</td>
+                  <td>{(l.handedOverBy ?? l.holder).characterName}</td>
+                  <td>
+                    {l.status === "SOLD" ? (
+                      <span className="text-green-300">Satıldı ({l.soldBy?.characterName ?? l.holder.characterName})</span>
+                    ) : l.status === "GIVEN" ? (
+                      l.receiver?.characterName
+                    ) : (
+                      <>
+                        {l.holder.characterName}
+                        {l.inVault && <span className="text-xs text-orange-300"> · kasada</span>}
+                      </>
+                    )}
+                  </td>
                   <td className="text-right text-mute"><LocalTime value={l.droppedAt} /></td>
                 </tr>
               ))}

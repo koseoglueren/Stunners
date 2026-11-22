@@ -2,7 +2,8 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { categoryLabel, hoursBetween, noah, noahShort } from "@/lib/format";
 import { first, type SearchParams } from "@/lib/forms";
-import { lootContribution } from "@/lib/settlement";
+import { allocate, lootContribution } from "@/lib/settlement";
+import { lootBeneficiaries, presence } from "@/lib/shares";
 import { Empty, PageHeader, Stat } from "@/components/ui";
 
 export const metadata = { title: "Raporlar" };
@@ -22,7 +23,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Sear
 
   const sessions = await prisma.farmSession.findMany({
     where: { startAt: { gte: from, lt: to } },
-    include: { location: true, members: { include: { user: true } }, loot: true },
+    include: { location: true, members: { include: { user: true } }, loot: { include: { owners: true } } },
   });
 
   let total = 0n;
@@ -40,16 +41,23 @@ export default async function ReportsPage({ searchParams }: { searchParams: Sear
     loc.count++;
     loc.hours += h;
     loc.total += earned;
-    loc.manHours += h * s.members.length;
-    byLoc.set(s.locationId, loc);
-    const n = BigInt(Math.max(1, s.members.length));
+    // each member's part: coin by time in the party, items by their owners
+    const parts = new Map<string, bigint>();
+    for (const l of s.loot) {
+      const c = lootContribution(l);
+      if (!c) continue;
+      for (const [id, v] of allocate(c.amount, lootBeneficiaries(l, s))) parts.set(id, (parts.get(id) ?? 0n) + v);
+    }
     for (const m of s.members) {
+      const mh = presence(m, s).minutes / 60;
+      loc.manHours += mh;
       const r = byMember.get(m.userId) ?? { name: m.user.characterName, count: 0, hours: 0, estShare: 0n };
       r.count++;
-      r.hours += h;
-      r.estShare += earned / n;
+      r.hours += mh;
+      r.estShare += parts.get(m.userId) ?? 0n;
       byMember.set(m.userId, r);
     }
+    byLoc.set(s.locationId, loc);
     for (const l of s.loot) {
       if (l.status === "COIN") continue;
       const key = l.itemName + (l.plusLevel !== null ? ` +${l.plusLevel}` : "");
@@ -125,7 +133,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Sear
                 ))}
               </tbody>
             </table>
-            <p className="px-5 pb-4 text-xs text-mute">Tahmini pay her farmın kendi ekibine eşit bölünmüş halidir; birleştirilmiş gün sonu hesaplarında gerçek pay farklı olabilir.</p>
+            <p className="px-5 pb-4 text-xs text-mute">Saat, üyenin partide geçirdiği süredir. Tahmini pay: coin süreye göre, satılan item pay sahiplerine eşit bölünür.</p>
           </div>
           <div className="card overflow-x-auto p-0 xl:col-span-2">
             <h2 className="px-5 pt-5 font-semibold">Düşen itemler</h2>
