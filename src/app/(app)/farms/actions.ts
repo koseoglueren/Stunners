@@ -367,3 +367,64 @@ export async function sellMany(form: FormData) {
   for (const sid of new Set(updates.map((u) => u.sessionId).filter(Boolean))) revalidatePath(`/farms/${sid}`);
   done("/vault", `${updates.length} item satıldı olarak kaydedildi. Aşağıdan dağıtımı yapabilirsin.`);
 }
+
+/** everything received from one member in one go: their coin and the items they hand over */
+export async function collectFromMember(sessionId: string, form: FormData) {
+  const me = await requireRole("OFFICER");
+  const path = `/farms/${sessionId}`;
+  if (await isLocked(sessionId)) fail(path, "Bu farm bir gün sonu hesabına dahil; yeni kayıt eklenemez.");
+  const s = await prisma.farmSession.findUniqueOrThrow({ where: { id: sessionId }, include: { members: true } });
+  const memberId = str(form, "memberId");
+  if (!s.members.some((m) => m.userId === memberId)) fail(path, "Üyeyi seç.");
+  const coinRaw = str(form, "coin");
+  const coin = coinRaw ? parseNoah(coinRaw) : null;
+  if (coinRaw && (coin === null || coin < 0n)) fail(path, "Coin miktarını doğru yaz (örn. 15m).");
+
+  const cats = form.getAll("cat").map(String);
+  const itemIds = form.getAll("itemId").map(String);
+  const names = form.getAll("itemName").map(String);
+  const qtys = form.getAll("qty").map(String);
+  const pluses = form.getAll("plusLevel").map(String);
+  const vals = form.getAll("ival").map(String);
+  const catalog = await prisma.itemCatalog.findMany({ where: { id: { in: itemIds.filter(Boolean) } } });
+  const now = new Date();
+  const droppedAt = s.endAt && now > s.endAt ? s.endAt : now;
+  const vault = form.get("vault") === "on";
+  const note = str(form, "note") || null;
+  const rows: Parameters<typeof prisma.lootEntry.create>[0]["data"][] = [];
+  for (let i = 0; i < cats.length; i++) {
+    const category = cats[i] as LootCategory;
+    if (!CATEGORIES.includes(category) || category === "COIN") continue;
+    const item = catalog.find((c) => c.id === itemIds[i]);
+    const itemName = item?.name ?? (names[i] ?? "").trim();
+    if (!itemName) fail(path, `${i + 1}. item satırında item seç veya adını yaz.`);
+    const qty = Math.max(1, parseInt(qtys[i] || "1", 10) || 1);
+    const plus = (pluses[i] ?? "").trim();
+    const v = (vals[i] ?? "").trim() ? parseNoah(vals[i]) : null;
+    if ((vals[i] ?? "").trim() && v === null) fail(path, `${itemName} için değeri doğru yaz.`);
+    rows.push({
+      sessionId,
+      category,
+      itemId: item?.id ?? null,
+      itemName,
+      quantity: qty,
+      plusLevel: plus !== "" ? Math.max(0, Math.min(15, parseInt(plus, 10) || 0)) : null,
+      holderId: memberId,
+      value: v ?? (item ? item.defaultPrice * BigInt(qty) : 0n),
+      status: "IN_STOCK",
+      inVault: vault,
+      vaultAt: vault ? now : null,
+      droppedAt,
+      note,
+    });
+  }
+  if (!coin && rows.length === 0) fail(path, "Coin miktarı veya en az bir item gir.");
+  await prisma.$transaction([
+    ...(coin ? [prisma.lootEntry.create({ data: { sessionId, category: "COIN", itemName: "Noah", quantity: 1, holderId: memberId, value: coin, status: "COIN", droppedAt, note } })] : []),
+    ...rows.map((data) => prisma.lootEntry.create({ data })),
+  ]);
+  await audit(me.id, "collected", `${sessionId} ${memberId}: ${coin ?? 0n} + ${rows.length} item`);
+  revalidatePath(path);
+  revalidatePath("/vault");
+  redirect(`${path}?tamam=${encodeURIComponent("Kaydedildi, sıradaki üyeye geçebilirsin.")}#teslim`);
+}

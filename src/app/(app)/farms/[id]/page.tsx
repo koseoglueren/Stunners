@@ -10,10 +10,12 @@ import { Badge, Empty, MemberLink, PageHeader, Stat } from "@/components/ui";
 import { Flash } from "@/components/Flash";
 import { ActionMenu, DateTimeInput, LocalTime, SubmitButton } from "@/components/client";
 import { LootForm } from "../LootForm";
+import { CollectForm } from "../CollectForm";
 import { MemberPicker } from "../MemberPicker";
 import {
   addLoot,
   addPartyMember,
+  collectFromMember,
   deleteLoot,
   deleteSession,
   finishSession,
@@ -74,6 +76,20 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
     for (const [id, part] of allocate(c.amount, lootBeneficiaries(l, s))) estimate.set(id, (estimate.get(id) ?? 0n) + part);
   }
   const ownersOf = (l: (typeof s.loot)[number]) => itemOwners(l, s);
+  // what was received from each member (coin + items they brought)
+  const fromWhom = (l: (typeof s.loot)[number]) => l.handedOverById ?? l.holderId;
+  const received = s.members.map((m) => {
+    const mine = s.loot.filter((l) => fromWhom(l) === m.userId);
+    const coinIn = mine.filter((l) => l.status === "COIN").reduce((a, l) => a + l.value, 0n);
+    const itemsIn = mine.filter((l) => l.status !== "COIN");
+    return { m, coinIn, itemsIn, done: mine.length > 0 };
+  });
+  const totalItems = new Map<string, number>();
+  for (const l of s.loot.filter((x) => x.status !== "COIN")) {
+    const k = `${l.itemName}${l.plusLevel !== null ? ` +${l.plusLevel}` : ""}`;
+    totalItems.set(k, (totalItems.get(k) ?? 0) + l.quantity);
+  }
+  const nextMember = received.find((r) => !r.done)?.m.userId ?? s.members[0]?.userId ?? "";
   const allOpts = allMembers.map((m) => ({ id: m.id, name: m.characterName }));
   const unsettledLoot = s.loot.filter((l) => !l.settlementId && lootContribution(l));
   const vaultItems = stock.filter((l) => l.inVault);
@@ -240,18 +256,70 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
 
         <div className="space-y-6 xl:col-span-2">
           {canAddLoot && (
-            <div className="card">
-              <h2 className="mb-3 font-semibold">Loot / coin ekle</h2>
-              <LootForm
-                action={addLoot.bind(null, s.id)}
-                items={items.map((i) => ({ id: i.id, name: i.name, category: i.category, price: i.defaultPrice.toString() }))}
-                members={memberOpts}
-                defaultHolder={isMember ? me.id : (memberOpts[0]?.id ?? "")}
-                coinDone={[...new Set(s.loot.filter((l) => l.status === "COIN").map((l) => l.holderId))]}
+            <div className="card" id="teslim">
+              <h2 className="mb-1 font-semibold">Üyeden teslim al</h2>
+              <p className="mb-3 text-sm text-mute">
+                Üyeyi seç, ondan aldığın coini ve itemleri yaz, kaydet. Sıradaki üye otomatik seçilir. ({received.filter((r) => r.done).length}/{received.length} üye tamam)
+              </p>
+              <CollectForm
+                action={collectFromMember.bind(null, s.id)}
+                members={received.map((r) => ({ id: r.m.userId, name: r.m.user.characterName, done: r.done }))}
+                items={items.filter((i) => i.category !== "COIN").map((i) => ({ id: i.id, name: i.name, category: i.category, price: i.defaultPrice.toString() }))}
+                defaultMember={nextMember}
               />
+              <details className="mt-4 border-t border-line pt-3">
+                <summary className="cursor-pointer text-sm text-mute hover:text-gold">Tek tek kayıt ekle (düşme saatiyle)</summary>
+                <div className="mt-3">
+                  <LootForm
+                    action={addLoot.bind(null, s.id)}
+                    items={items.map((i) => ({ id: i.id, name: i.name, category: i.category, price: i.defaultPrice.toString() }))}
+                    members={memberOpts}
+                    defaultHolder={isMember ? me.id : (memberOpts[0]?.id ?? "")}
+                    coinDone={[...new Set(s.loot.filter((l) => l.status === "COIN").map((l) => l.holderId))]}
+                  />
+                </div>
+              </details>
               <p className="mt-2 text-xs text-mute">Miktarları 150m, 1,5b, 250k veya 150.000.000 şeklinde yazabilirsin.</p>
             </div>
           )}
+
+          <div className="card p-0">
+            <h2 className="px-5 pt-5 font-semibold">Üye bazında teslim alınanlar</h2>
+            <div className="overflow-x-auto">
+              <table className="table mt-2">
+                <thead>
+                  <tr>
+                    <th>Üye</th>
+                    <th className="text-right">Coin</th>
+                    <th>Itemler</th>
+                    <th>Durum</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {received.map((r) => (
+                    <tr key={r.m.userId}>
+                      <td>{r.m.user.characterName}</td>
+                      <td className="text-right text-gold whitespace-nowrap">{r.coinIn ? noah(r.coinIn) : "-"}</td>
+                      <td className="text-sm">
+                        {r.itemsIn.length
+                          ? r.itemsIn.map((l) => `${l.itemName}${l.plusLevel !== null ? ` +${l.plusLevel}` : ""}${l.quantity > 1 ? ` ×${l.quantity}` : ""}`).join(", ")
+                          : <span className="text-mute">-</span>}
+                      </td>
+                      <td>{r.done ? <Badge tone="green">Alındı</Badge> : <Badge tone="orange">Bekliyor</Badge>}</td>
+                    </tr>
+                  ))}
+                  <tr className="font-semibold">
+                    <td>Farm toplamı</td>
+                    <td className="text-right text-gold whitespace-nowrap">{noah(coin)}</td>
+                    <td className="text-sm font-normal">
+                      {totalItems.size ? [...totalItems].map(([k, q]) => `${k}${q > 1 ? ` ×${q}` : ""}`).join(", ") : <span className="text-mute">-</span>}
+                    </td>
+                    <td className="text-sm font-normal text-mute">{received.filter((r) => r.done).length}/{received.length}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
 
           {(vaultItems.length > 0 || (locked && soldWaiting.length > 0)) && (
             <div className="card border-warn/40" id="pazar">
