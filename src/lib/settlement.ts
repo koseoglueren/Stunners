@@ -1,7 +1,10 @@
 import type { LootEntry } from "@prisma/client";
 
+/** who gets a part of a contribution, and how big their part is relative to the others */
+export type Beneficiary = { userId: string; weight: bigint };
+
 /** kept = an item the member keeps (not Noah they can hand over). */
-export type Contribution = { amount: bigint; holderId: string; kept?: boolean };
+export type Contribution = { amount: bigint; holderId: string; kept?: boolean; beneficiaries?: Beneficiary[] };
 
 /** What a loot entry contributes to the pot, and who currently holds that value. */
 export function lootContribution(
@@ -13,63 +16,77 @@ export function lootContribution(
     case "SOLD":
       return { amount: e.salePrice ?? 0n, holderId: e.soldById ?? e.holderId, kept: false };
     case "GIVEN":
-      // the receiver keeps the item, so its value counts as already received by them
+      // legacy: the receiver kept the item, so its value counts as already received by them
       return { amount: e.value, holderId: e.receiverId ?? e.holderId, kept: true };
     default:
       return null; // unsold stock is not shared yet
   }
 }
 
+/**
+ * Splits amount by weight. Each part is rounded down and the leftover Noah is
+ * handed out 1 by 1 to the biggest fractions (ties by id), so parts add up exactly.
+ */
+export function allocate(amount: bigint, beneficiaries: Beneficiary[]): Map<string, bigint> {
+  const merged = new Map<string, bigint>();
+  for (const b of beneficiaries) if (b.weight > 0n) merged.set(b.userId, (merged.get(b.userId) ?? 0n) + b.weight);
+  const out = new Map<string, bigint>();
+  const total = [...merged.values()].reduce((a, w) => a + w, 0n);
+  if (total === 0n || amount === 0n) {
+    for (const id of merged.keys()) out.set(id, 0n);
+    return out;
+  }
+  const rows = [...merged].map(([userId, w]) => ({ userId, base: (amount * w) / total, frac: (amount * w) % total }));
+  let left = amount - rows.reduce((a, r) => a + r.base, 0n);
+  rows
+    .slice()
+    .sort((a, b) => (a.frac > b.frac ? -1 : a.frac < b.frac ? 1 : a.userId < b.userId ? -1 : 1))
+    .forEach((r) => {
+      if (left > 0n) {
+        r.base += 1n;
+        left -= 1n;
+      }
+    });
+  for (const r of rows) out.set(r.userId, r.base);
+  return out;
+}
+
 export type ShareRow = { userId: string; share: bigint; held: bigint; kept: bigint; balance: bigint };
-export type TransferKind = "DELIVERY" | "PAYOUT" | "DIRECT";
+export type TransferKind = "DELIVERY" | "PAYOUT";
 export type TransferRow = { fromId: string; toId: string; amount: bigint; kind: TransferKind };
 
 /**
- * Equal split of the pot among members. The leftover Noah (total % n) is given
- * 1 Noah each to the first members so the shares add up exactly to the total.
- * balance > 0 means the member holds more than their share and must give it away.
+ * Every contribution is split among its own beneficiaries (coin: the farm team by
+ * time present, a sold item: its owners equally). balance > 0 means the member
+ * holds more than their share.
  */
-export function computeSettlement(
-  memberIds: string[],
-  contributions: Contribution[],
-  collectorId?: string | null,
-) {
-  const members = [...new Set(memberIds)].sort();
-  const n = BigInt(members.length);
-  const held = new Map<string, bigint>(members.map((m) => [m, 0n]));
+export function computeSettlement(contributions: Contribution[], collectorId: string) {
+  const share = new Map<string, bigint>();
+  const held = new Map<string, bigint>();
   const kept = new Map<string, bigint>();
   let total = 0n;
   for (const c of contributions) {
     total += c.amount;
     held.set(c.holderId, (held.get(c.holderId) ?? 0n) + c.amount);
     if (c.kept) kept.set(c.holderId, (kept.get(c.holderId) ?? 0n) + c.amount);
+    const bens = c.beneficiaries?.length ? c.beneficiaries : [{ userId: c.holderId, weight: 1n }];
+    for (const [id, part] of allocate(c.amount, bens)) share.set(id, (share.get(id) ?? 0n) + part);
   }
-  if (collectorId && !held.has(collectorId)) held.set(collectorId, 0n);
-  const perShare = n > 0n ? total / n : 0n;
-  const remainder = n > 0n ? total - perShare * n : 0n;
-
-  const shares: ShareRow[] = [];
-  members.forEach((userId, i) => {
-    const share = perShare + (BigInt(i) < remainder ? 1n : 0n);
+  const ids = new Set<string>([...share.keys(), ...held.keys(), collectorId]);
+  const shares: ShareRow[] = [...ids].sort().map((userId) => {
+    const s = share.get(userId) ?? 0n;
     const h = held.get(userId) ?? 0n;
-    shares.push({ userId, share, held: h, kept: kept.get(userId) ?? 0n, balance: h - share });
+    return { userId, share: s, held: h, kept: kept.get(userId) ?? 0n, balance: h - s };
   });
-  // someone outside the team holds loot (e.g. sold by a non-member): they owe all of it
-  for (const [userId, h] of held) {
-    if (!members.includes(userId) && (h !== 0n || userId === collectorId)) {
-      shares.push({ userId, share: 0n, held: h, kept: kept.get(userId) ?? 0n, balance: h });
-    }
-  }
-
-  const transfers = collectorId ? collectorTransfers(shares, collectorId) : minimizeTransfers(shares);
-  return { total, perShare, remainder, shares, transfers };
+  const sharers = shares.filter((s) => s.share > 0n).length;
+  const perShare = sharers ? total / BigInt(sharers) : 0n; // average, for display
+  const remainder = sharers ? total - perShare * BigInt(sharers) : 0n;
+  return { total, perShare, remainder, shares, transfers: collectorTransfers(shares, collectorId) };
 }
 
 /**
- * Collector mode: everyone hands the Noah they hold to one member (DELIVERY),
- * then that member pays every share out (PAYOUT). Items a member kept are
- * deducted from their payout; if the item is worth more than their share,
- * they hand the difference over as well.
+ * Everyone hands the Noah they hold to the clan vault member (DELIVERY), who then
+ * pays every share out (PAYOUT). Items a member kept are deducted from their payout.
  */
 export function collectorTransfers(shares: ShareRow[], collectorId: string): TransferRow[] {
   const out: TransferRow[] = [];
@@ -84,27 +101,6 @@ export function collectorTransfers(shares: ShareRow[], collectorId: string): Tra
     }
     if (delivery > 0n) out.push({ fromId: s.userId, toId: collectorId, amount: delivery, kind: "DELIVERY" });
     if (payout > 0n) out.push({ fromId: collectorId, toId: s.userId, amount: payout, kind: "PAYOUT" });
-  }
-  return out;
-}
-
-/** Greedy: biggest debtor pays biggest creditor. Gives at most n-1 transfers. */
-export function minimizeTransfers(shares: ShareRow[]): TransferRow[] {
-  const debtors = shares.filter((s) => s.balance > 0n).map((s) => ({ id: s.userId, amt: s.balance }));
-  const creditors = shares.filter((s) => s.balance < 0n).map((s) => ({ id: s.userId, amt: -s.balance }));
-  const out: TransferRow[] = [];
-  const byAmt = (a: { amt: bigint }, b: { amt: bigint }) => (a.amt > b.amt ? -1 : a.amt < b.amt ? 1 : 0);
-  while (debtors.length && creditors.length) {
-    debtors.sort(byAmt);
-    creditors.sort(byAmt);
-    const d = debtors[0];
-    const c = creditors[0];
-    const amt = d.amt < c.amt ? d.amt : c.amt;
-    out.push({ fromId: d.id, toId: c.id, amount: amt, kind: "DIRECT" });
-    d.amt -= amt;
-    c.amt -= amt;
-    if (d.amt === 0n) debtors.shift();
-    if (c.amt === 0n) creditors.shift();
   }
   return out;
 }

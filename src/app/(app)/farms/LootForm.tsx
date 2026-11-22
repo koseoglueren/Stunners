@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { SubmitButton } from "@/components/client";
+import { DateTimeInput, SubmitButton } from "@/components/client";
 
 type Item = { id: string; name: string; category: string; price: string };
 type Member = { id: string; name: string };
@@ -116,7 +116,14 @@ export function LootForm({
         <input name="note" className="input" placeholder="örn. boss drop" />
       </div>
       {!isCoin && (
-        <label className="flex items-end gap-2 pb-2 text-sm sm:col-span-2 lg:col-span-2">
+        <div className="sm:col-span-2 lg:col-span-2">
+          <label className="label">Düştüğü saat (boş = şimdi)</label>
+          <DateTimeInput name="droppedAt" />
+          <p className="mt-1 text-xs text-mute">Pay sahipleri, item düştüğü anda partide olanlardır.</p>
+        </div>
+      )}
+      {!isCoin && (
+        <label className="flex items-end gap-2 pb-2 text-sm sm:col-span-2 lg:col-span-4">
           <input type="checkbox" name="vault" defaultChecked className="h-4 w-4 accent-gold" />
           <span>Pazarda satılacak, clan kasasına ekle</span>
         </label>

@@ -48,7 +48,7 @@ export default async function SettlementPage({ params, searchParams }: { params:
     : [];
   const summary = collectorMode
     ? [
-        `${st.title}: toplam ${noah(st.total)} Noah, kişi başı ${noah(st.perShare)}. Dağıtıcı: ${name(st.collectorId!)}`,
+        `${st.title}: toplam ${noah(st.total)} Noah, ortalama pay ${noah(st.perShare)}. Kasa hesabı: ${name(st.collectorId!)}`,
         "Teslim:",
         ...rows.filter((r) => r.delivery || r.items.length).map((r) => `- ${name(r.userId)}: ${r.delivery ? noah(r.delivery.amount) + " Noah" : ""}${r.items.length ? (r.delivery ? " + " : "") + r.items.join(", ") : ""}`),
         "Ödeme:",
@@ -65,7 +65,7 @@ export default async function SettlementPage({ params, searchParams }: { params:
         title={st.title}
         subtitle={
           <>
-            {collectorMode && <>Dağıtıcı: <b className="text-gold">{name(st.collectorId!)}</b> · </>}
+            {collectorMode && <>Kasa hesabı: <b className="text-gold">{name(st.collectorId!)}</b> · </>}
             Kilitleyen: {st.createdBy.characterName} · <LocalTime value={st.lockedAt ?? st.createdAt} />
           </>
         }
@@ -79,7 +79,7 @@ export default async function SettlementPage({ params, searchParams }: { params:
       <Flash sp={sp} />
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
         <Stat label="Toplam" value={noahShort(st.total)} hint={`${noah(st.total)} Noah`} accent />
-        <Stat label="Kişi başı" value={noahShort(st.perShare)} hint={`${noah(st.perShare)} Noah${st.remainder > 0n ? ` (+1 Noah ${st.remainder} kişiye)` : ""}`} />
+        <Stat label="Ortalama pay" value={noahShort(st.perShare)} hint="Coin süreye, item pay sahiplerine göre" />
         <Stat label="Katılımcı" value={shares.filter((s) => s.share > 0n).length} />
       </div>
 

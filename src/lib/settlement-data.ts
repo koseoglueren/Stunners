@@ -1,29 +1,30 @@
 import "server-only";
 import { prisma } from "./db";
 import { computeSettlement, lootContribution } from "./settlement";
+import { lootBeneficiaries } from "./shares";
 
-/** Loads sessions + their unsettled loot and computes the equal split preview. */
-export async function buildSettlementPreview(sessionIds: string[], collectorId?: string | null) {
+/** Loads sessions + their unsettled loot and computes who gets what. */
+export async function buildSettlementPreview(sessionIds: string[], collectorId: string) {
   const sessions = await prisma.farmSession.findMany({
     where: { id: { in: sessionIds } },
     include: {
       location: true,
       members: { include: { user: true } },
-      loot: { where: { settlementId: null }, include: { holder: true, soldBy: true, receiver: true } },
+      loot: {
+        where: { settlementId: null },
+        include: { holder: true, soldBy: true, receiver: true, owners: { include: { user: true } } },
+      },
     },
     orderBy: { startAt: "asc" },
   });
   const users = new Map<string, { id: string; characterName: string }>();
-  const memberIds: string[] = [];
-  for (const s of sessions)
-    for (const m of s.members) {
-      memberIds.push(m.userId);
-      users.set(m.userId, m.user);
-    }
+  for (const s of sessions) for (const m of s.members) users.set(m.userId, m.user);
   const included = sessions.flatMap((s) =>
     s.loot.flatMap((l) => {
       const c = lootContribution(l);
-      return c ? [{ loot: l, ...c }] : [];
+      if (!c) return [];
+      for (const o of l.owners) users.set(o.userId, o.user);
+      return [{ loot: l, ...c, beneficiaries: lootBeneficiaries(l, s) }];
     }),
   );
   for (const l of included) {
@@ -32,9 +33,9 @@ export async function buildSettlementPreview(sessionIds: string[], collectorId?:
   }
   const unsold = sessions.flatMap((s) => s.loot.filter((l) => l.status === "IN_STOCK"));
   for (const l of unsold) users.set(l.holder.id, l.holder);
-  const collector = collectorId ? await prisma.user.findUnique({ where: { id: collectorId } }) : null;
+  const collector = await prisma.user.findUnique({ where: { id: collectorId } });
   if (collector) users.set(collector.id, collector);
   const active = sessions.filter((s) => s.status === "ACTIVE");
-  const result = computeSettlement(memberIds, included, collector?.id ?? null);
+  const result = computeSettlement(included, collector?.id ?? collectorId);
   return { sessions, users, included, unsold, active, collector, ...result };
 }

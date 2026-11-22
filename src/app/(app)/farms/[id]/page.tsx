@@ -4,7 +4,8 @@ import { prisma } from "@/lib/db";
 import { hasRole, requireUser } from "@/lib/auth";
 import { categoryLabel, classLabel, durationText, hoursBetween, lootStatusLabel, noah, noahShort } from "@/lib/format";
 import type { SearchParams } from "@/lib/forms";
-import { lootContribution } from "@/lib/settlement";
+import { allocate, lootContribution } from "@/lib/settlement";
+import { itemOwners, lootBeneficiaries, presence } from "@/lib/shares";
 import { Badge, Empty, MemberLink, PageHeader, Stat } from "@/components/ui";
 import { Flash } from "@/components/Flash";
 import { DateTimeInput, LocalTime, SubmitButton } from "@/components/client";
@@ -12,14 +13,17 @@ import { LootForm } from "../LootForm";
 import { MemberPicker } from "../MemberPicker";
 import {
   addLoot,
+  addPartyMember,
   deleteLoot,
   deleteSession,
   finishSession,
-  giveLoot,
   reopenSession,
+  resetLootOwners,
   restockLoot,
   sellLoot,
+  setLootOwners,
   setLootVault,
+  setMemberTimes,
   updateSession,
 } from "../actions";
 
@@ -35,7 +39,7 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
       location: true,
       createdBy: true,
       members: { include: { user: true }, orderBy: { user: { characterName: "asc" } } },
-      loot: { include: { holder: true, soldBy: true, receiver: true }, orderBy: { droppedAt: "desc" } },
+      loot: { include: { holder: true, soldBy: true, receiver: true, owners: true }, orderBy: { droppedAt: "desc" } },
       settlements: { include: { settlement: true } },
     },
   });
@@ -60,6 +64,16 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
   const n = BigInt(Math.max(1, s.members.length));
   const hours = hoursBetween(s.startAt, s.endAt);
   const memberOpts = s.members.map((m) => ({ id: m.userId, name: m.user.characterName }));
+  const nameOf = new Map(allMembers.map((m) => [m.id, m.characterName]));
+  const outsiders = allMembers.filter((m) => !s.members.some((x) => x.userId === m.id));
+  // estimated share of everything counted so far (coin by time present, sold items by owners)
+  const estimate = new Map<string, bigint>();
+  for (const l of s.loot) {
+    const c = lootContribution(l);
+    if (!c) continue;
+    for (const [id, part] of allocate(c.amount, lootBeneficiaries(l, s))) estimate.set(id, (estimate.get(id) ?? 0n) + part);
+  }
+  const ownersOf = (l: (typeof s.loot)[number]) => itemOwners(l, s);
   const allOpts = allMembers.map((m) => ({ id: m.id, name: m.characterName }));
   const unsettledLoot = s.loot.filter((l) => !l.settlementId && lootContribution(l));
   const vaultItems = stock.filter((l) => l.inVault);
@@ -93,7 +107,7 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
         <Stat label="Item satış + dağıtılan" value={noahShort(sold + given)} />
         <Stat label="Satılmayan (tahmini)" value={noahShort(stockValue)} hint={`${stock.length} kayıt`} />
         <Stat
-          label="Kişi başı (şimdilik)"
+          label="Ortalama pay (şimdilik)"
           value={noahShort(earned / n)}
           hint={hours > 0 ? `${noahShort(Number(earned) / hours)} / saat` : undefined}
         />
@@ -125,14 +139,63 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
       <div className="grid gap-6 xl:grid-cols-3">
         <div className="card xl:col-span-1">
           <h2 className="mb-3 font-semibold">Ekip ({s.members.length} kişi)</h2>
-          <ul className="space-y-1 text-sm">
-            {s.members.map((m) => (
-              <li key={m.userId} className="flex justify-between">
-                <MemberLink user={m.user} />
-                <span className="text-mute">{m.user.charClass ? classLabel[m.user.charClass] : ""}</span>
-              </li>
-            ))}
+          <ul className="divide-y divide-line text-sm">
+            {s.members.map((m) => {
+              const p = presence(m, s);
+              const late = m.joinedAt && m.joinedAt > s.startAt;
+              const early = m.leftAt && (!s.endAt || m.leftAt < s.endAt);
+              return (
+                <li key={m.userId} className="py-1.5">
+                  <div className="flex justify-between gap-2">
+                    <span>
+                      <MemberLink user={m.user} />{" "}
+                      <span className="text-xs text-mute">{m.user.charClass ? classLabel[m.user.charClass] : ""}</span>
+                    </span>
+                    <span className="text-gold" title="Şu ana kadarki tahmini payı">{noahShort(estimate.get(m.userId) ?? 0n)}</span>
+                  </div>
+                  {(late || early) && (
+                    <div className="text-xs text-orange-300">
+                      {late && <>Katıldı: <LocalTime value={m.joinedAt} mode="time" /> </>}
+                      {early && <>Ayrıldı: <LocalTime value={m.leftAt} mode="time" /> </>}· {durationText(p.from, p.to)} farmda
+                    </div>
+                  )}
+                  {officer && !locked && (
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-xs text-mute hover:text-gold">Katılış / ayrılış saati</summary>
+                      <form action={setMemberTimes.bind(null, s.id, m.userId)} className="mt-2 space-y-2">
+                        <div>
+                          <label className="label">Katıldığı saat (boş = farm başı)</label>
+                          <DateTimeInput name="joinedAt" defaultValue={m.joinedAt?.toISOString() ?? ""} />
+                        </div>
+                        <div>
+                          <label className="label">Ayrıldığı saat (boş = farm sonu)</label>
+                          <DateTimeInput name="leftAt" defaultValue={m.leftAt?.toISOString() ?? ""} />
+                        </div>
+                        <SubmitButton className="btn-ghost btn-sm">Kaydet</SubmitButton>
+                      </form>
+                    </details>
+                  )}
+                </li>
+              );
+            })}
           </ul>
+          <p className="mt-2 text-xs text-mute">Coin, farmda geçirilen süreye göre bölünür. Item, düştüğü anda partide olanlara eşit bölünür.</p>
+          {officer && !locked && outsiders.length > 0 && (
+            <form action={addPartyMember.bind(null, s.id)} className="mt-4 space-y-2 rounded-lg border border-line bg-bg p-3">
+              <div className="text-sm font-semibold">Partiye sonradan katılan</div>
+              <select name="userId" className="input" defaultValue="" required>
+                <option value="" disabled>Üye seç</option>
+                {outsiders.map((u) => (
+                  <option key={u.id} value={u.id}>{u.characterName}</option>
+                ))}
+              </select>
+              <div>
+                <label className="label">Katıldığı saat</label>
+                <DateTimeInput name="joinedAt" defaultValue={new Date().toISOString()} />
+              </div>
+              <SubmitButton className="btn-primary btn-sm w-full">Partiye ekle</SubmitButton>
+            </form>
+          )}
           {officer && !locked && (
             <details className="mt-4">
               <summary className="cursor-pointer text-sm text-gold">Ekibi ve saatleri düzenle</summary>
@@ -199,8 +262,8 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
                 <Link href="/vault" className="text-sm text-gold hover:underline">Clan kasası →</Link>
               </div>
               <p className="mb-3 text-sm text-mute">
-                Bu itemler <b className="text-ink">bu farmın {s.members.length} kişilik ekibine</b> aittir. Satıldığında para bu ekip arasında eşit dağıtılır:{" "}
-                <span className="text-ink">{s.members.map((m) => m.user.characterName).join(", ")}</span>.
+                Bu itemler <b className="text-ink">bu farmın ekibine</b> aittir: <span className="text-ink">{s.members.map((m) => m.user.characterName).join(", ")}</span>.
+                Satıldığında para itemin pay sahipleri arasında eşit dağıtılır (sonradan katılan, katılmadan önce düşen itemlerde pay sahibi değildir).
               </p>
               {vaultItems.length > 0 && (
                 <ul className="divide-y divide-line text-sm">
@@ -210,14 +273,14 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
                         {l.itemName}
                         {l.plusLevel !== null && <span className="text-gold"> +{l.plusLevel}</span>}
                         {l.quantity > 1 && <span className="text-mute"> ×{l.quantity}</span>}
-                        <span className="text-xs text-mute"> · {l.holder.characterName} tutuyor</span>
+                        <span className="text-xs text-mute"> · {l.holder.characterName} tutuyor · pay: {ownersOf(l).length} kişi</span>
                       </span>
                       <span className="text-mute">~{noah(l.value)}</span>
                     </li>
                   ))}
                   <li className="flex justify-between py-2 font-medium">
                     <span>Tahmini toplam</span>
-                    <span>~{noah(vaultValue)} · kişi başı ~{noahShort(vaultValue / n)}</span>
+                    <span>~{noah(vaultValue)}</span>
                   </li>
                 </ul>
               )}
@@ -268,6 +331,11 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
                               {categoryLabel[l.category]} · <LocalTime value={l.droppedAt} mode="time" />
                               {l.note && ` · ${l.note}`}
                             </div>
+                            {l.status !== "COIN" && (
+                              <div className="text-xs text-mute" title={ownersOf(l).map((id) => nameOf.get(id) ?? "?").join(", ")}>
+                                Pay sahibi: {l.customOwners ? ownersOf(l).map((id) => nameOf.get(id) ?? "?").join(", ") : `${ownersOf(l).length} kişi (ekip)`}
+                              </div>
+                            )}
                           </td>
                           <td className="text-sm">
                             {l.status === "SOLD" ? (
@@ -313,16 +381,22 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
                                     </form>
                                   )}
                                   {l.status !== "COIN" && (
-                                    <form action={giveLoot.bind(null, l.id)} className="space-y-2 border-t border-line pt-3">
-                                      <div className="text-xs font-semibold text-mute uppercase">Üyeye ver (payından düşülür)</div>
-                                      <select name="receiverId" className="input" defaultValue={l.receiverId ?? ""}>
-                                        <option value="" disabled>Alan üye</option>
-                                        {memberOpts.map((m) => (
-                                          <option key={m.id} value={m.id}>{m.name}</option>
+                                    <form action={setLootOwners.bind(null, l.id)} className="space-y-2 border-t border-line pt-3">
+                                      <div className="text-xs font-semibold text-mute uppercase">Pay sahipleri</div>
+                                      <div className="max-h-40 space-y-1 overflow-y-auto text-sm">
+                                        {[...new Set([...memberOpts.map((m) => m.id), ...ownersOf(l)])].map((id) => (
+                                          <label key={id} className="flex items-center gap-2">
+                                            <input type="checkbox" name="ownerIds" value={id} defaultChecked={ownersOf(l).includes(id)} className="accent-gold" />
+                                            {nameOf.get(id) ?? "?"}
+                                          </label>
                                         ))}
-                                      </select>
-                                      <input name="value" className="input" placeholder="Değeri" defaultValue={noah(l.value)} required />
-                                      <SubmitButton className="btn-ghost btn-sm w-full">Üyeye ver</SubmitButton>
+                                      </div>
+                                      <SubmitButton className="btn-ghost btn-sm w-full">Pay sahiplerini kaydet</SubmitButton>
+                                    </form>
+                                  )}
+                                  {l.customOwners && (
+                                    <form action={resetLootOwners.bind(null, l.id, undefined)}>
+                                      <SubmitButton className="btn-ghost btn-sm w-full">Varsayılana dön (ekip)</SubmitButton>
                                     </form>
                                   )}
                                   <div className="flex flex-wrap gap-2 border-t border-line pt-3">
