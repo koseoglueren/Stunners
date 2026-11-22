@@ -4,8 +4,8 @@ import { categoryLabel, noah, noahShort } from "@/lib/format";
 import type { SearchParams } from "@/lib/forms";
 import { PageHeader } from "@/components/ui";
 import { Flash } from "@/components/Flash";
-import { SubmitButton } from "@/components/client";
-import { createItem, updateItem } from "./actions";
+import { ActionMenu, SubmitButton } from "@/components/client";
+import { createItem, deleteItem, updateItem } from "./actions";
 
 export const metadata = { title: "Item kataloğu" };
 
@@ -71,7 +71,8 @@ export default async function ItemsPage({ searchParams }: { searchParams: Search
                     <th>Item</th>
                     <th className="text-right">Düşen</th>
                     <th className="text-right">Son satış ort.</th>
-                    <th>Fiyat</th>
+                    <th className="text-right">Fiyat</th>
+                    {canEdit && <th></th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -83,19 +84,43 @@ export default async function ItemsPage({ searchParams }: { searchParams: Search
                         <td>{i.name}</td>
                         <td className="text-right">{dropMap.get(i.id) ?? 0}</td>
                         <td className="text-right text-mute">{avg !== null ? `${noahShort(avg)} (${r.length})` : "-"}</td>
-                        <td>
-                          {canEdit ? (
-                            <form action={updateItem.bind(null, i.id)} className="flex items-center gap-1">
-                              <input name="price" className="input w-32 py-1" defaultValue={noah(i.defaultPrice)} />
-                              <label className="flex items-center gap-1 text-xs text-mute" title="Listede göster">
-                                <input type="checkbox" name="active" defaultChecked={i.active} className="accent-[#d4a64a]" /> aktif
-                              </label>
-                              <SubmitButton className="btn-ghost btn-sm">Kaydet</SubmitButton>
-                            </form>
-                          ) : (
-                            noah(i.defaultPrice)
-                          )}
+                        <td className="text-right whitespace-nowrap">
+                          {noah(i.defaultPrice)}
+                          {!i.active && <div className="text-xs text-mute">pasif</div>}
                         </td>
+                        {canEdit && (
+                          <td className="text-right">
+                            <ActionMenu title={i.name} label="Düzenle">
+                              <form action={updateItem.bind(null, i.id)} className="space-y-3">
+                                <div>
+                                  <label className="label">Item adı</label>
+                                  <input name="name" className="input" defaultValue={i.name} required />
+                                </div>
+                                <div>
+                                  <label className="label">Kategori</label>
+                                  <select name="category" className="input" defaultValue={i.category}>
+                                    {cats.map(([k, v]) => (
+                                      <option key={k} value={k}>{v}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className="label">Piyasa fiyatı (adet)</label>
+                                  <input name="price" className="input" defaultValue={noah(i.defaultPrice)} />
+                                </div>
+                                <label className="flex items-center gap-2 text-sm">
+                                  <input type="checkbox" name="active" defaultChecked={i.active} className="accent-gold" /> Loot girerken listede göster
+                                </label>
+                                <SubmitButton className="btn-primary w-full">Kaydet</SubmitButton>
+                              </form>
+                              <form action={deleteItem.bind(null, i.id)} className="border-t border-line pt-3">
+                                <SubmitButton className="btn-danger btn-sm w-full" confirm={`${i.name} katalogdan silinsin mi? Eski farm kayıtları adıyla kalır.`}>
+                                  Katalogdan sil
+                                </SubmitButton>
+                              </form>
+                            </ActionMenu>
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
