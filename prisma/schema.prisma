@@ -90,6 +90,7 @@ model User {
   settlements     Settlement[]
   collecting      Settlement[]    @relation("SettlementCollector")
   lootHandedOver  LootEntry[]     @relation("LootHandedOver")
+  lootOwned       LootOwner[]
   auditLogs       AuditLog[]
 }
 
@@ -121,6 +122,10 @@ model FarmSession {
 model SessionMember {
   sessionId String
   userId    String
+  /// null = from the farm start. Set when someone joins the party later.
+  joinedAt  DateTime?
+  /// null = until the farm end. Set when someone leaves early.
+  leftAt    DateTime?
   session   FarmSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   user      User        @relation(fields: [userId], references: [id])
 
@@ -170,7 +175,26 @@ model LootEntry {
   handoverSettlement   Settlement? @relation("SettlementHandover", fields: [handoverSettlementId], references: [id])
   handedOverById       String?
   handedOverBy         User?       @relation("LootHandedOver", fields: [handedOverById], references: [id])
+  /// true = owners list edited by an admin; false = everyone in the farm when it dropped
+  customOwners Boolean      @default(false)
+  owners       LootOwner[]
   createdAt    DateTime     @default(now())
+}
+
+/// members who have a share in an item (only used when customOwners = true)
+model LootOwner {
+  lootId String
+  userId String
+  loot   LootEntry @relation(fields: [lootId], references: [id], onDelete: Cascade)
+  user   User      @relation(fields: [userId], references: [id])
+
+  @@id([lootId, userId])
+}
+
+/// simple key/value clan settings (e.g. treasurerId = the member whose account is the clan vault)
+model Setting {
+  key   String @id
+  value String
 }
 
 model Settlement {

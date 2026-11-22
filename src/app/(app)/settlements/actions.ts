@@ -10,14 +10,14 @@ import { buildSettlementPreview } from "@/lib/settlement-data";
 export async function createSettlement(form: FormData) {
   const me = await requireRole("OFFICER");
   const ids = form.getAll("sessionIds").map(String).filter(Boolean);
-  const mode = str(form, "mode") === "DIRECT" ? "DIRECT" : "COLLECTOR";
-  const collectorId = mode === "COLLECTOR" ? str(form, "collectorId") : "";
-  const handover = mode === "COLLECTOR" && form.get("handover") === "1";
+  const mode = "COLLECTOR" as const;
+  const collectorId = str(form, "collectorId");
+  const handover = form.get("handover") === "1";
   const back = `/settlements/new?${ids.map((i) => `oturum=${i}`).join("&")}`;
   if (ids.length === 0) fail("/settlements/new", "En az bir farm seç.");
-  if (mode === "COLLECTOR" && !collectorId) fail(back, "Farmı teslim alacak üyeyi (dağıtıcı) seç.");
-  const p = await buildSettlementPreview(ids, collectorId || null);
-  if (mode === "COLLECTOR" && !p.collector) fail(back, "Dağıtıcı üye bulunamadı.");
+  if (!collectorId) fail(back, "Kasa hesabını (farmı teslim alacak üye) seç.");
+  const p = await buildSettlementPreview(ids, collectorId);
+  if (!p.collector) fail(back, "Kasa hesabı üyesi bulunamadı.");
   if (p.active.length) fail(back, "Devam eden farm var; önce farmı bitir.");
   if (p.included.length === 0 && !(handover && p.unsold.length)) fail(back, "Hesaplanacak coin veya satılmış item yok.");
   const title = str(form, "title") || `Gün sonu ${new Date().toLocaleDateString("tr-TR", { timeZone: "Europe/Istanbul" })}`;
@@ -57,6 +57,7 @@ export async function createSettlement(form: FormData) {
     return st;
   });
   await audit(me.id, "settlement_locked", `${title}: ${p.total} / ${p.shares.length} kişi`);
+  revalidatePath("/vault");
   revalidatePath("/settlements");
   redirect(`/settlements/${settlement.id}`);
 }
@@ -99,5 +100,6 @@ export async function setTransferStatus(id: string, status: "PENDING" | "SENT" |
   });
   await audit(me.id, "transfer_" + status.toLowerCase(), `${t.amount} ${t.fromId}->${t.toId}`);
   revalidatePath(backTo);
+  revalidatePath("/vault");
   redirect(backTo);
 }

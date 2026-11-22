@@ -78,7 +78,7 @@ export function VaultForm({
         <input name="value" className="input" placeholder={suggested !== null ? `${fmt(suggested)} (katalog)` : "örn. 40m"} />
       </div>
       <div>
-        <label className="label">Item kimde</label>
+        <label className="label">Hangi hesapta</label>
         <select name="holderId" className="input" defaultValue={defaultHolder}>
           {members.map((m) => (
             <option key={m.id} value={m.id}>{m.name}</option>
@@ -86,16 +86,14 @@ export function VaultForm({
         </select>
       </div>
       <div className="sm:col-span-2">
-        <label className="label">Hangi farmdan? (satış parası o ekibe dağıtılır)</label>
-        <select name="sessionId" className="input" value={farm} onChange={(e) => setFarm(e.target.value)}>
-          <option value="">Farm yok, clan malı</option>
+        <label className="label">Hangi farmdan? (pay sahipleri o farmın ekibi olur)</label>
+        <select name="sessionId" className="input" value={farm} onChange={(e) => setFarm(e.target.value)} required>
+          <option value="" disabled>Farm seç</option>
           {farms.map((f) => (
             <option key={f.id} value={f.id}>{f.name}</option>
           ))}
         </select>
-        {!farm && (
-          <p className="mt-1 text-xs text-mute">Farm seçilmezse item clan malı olarak tutulur; satışı bir farm dağıtımına girmez.</p>
-        )}
+        <p className="mt-1 text-xs text-mute">Pay sahiplerini ekledikten sonra İşlem menüsünden değiştirebilirsin.</p>
       </div>
       <div className="sm:col-span-2">
         <label className="label">Not (isteğe bağlı)</label>

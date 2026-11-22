@@ -140,6 +140,7 @@ export async function addLoot(sessionId: string, form: FormData) {
         holderId,
         value: value ?? price * BigInt(qty),
         status: "IN_STOCK",
+        droppedAt: readDate(form, "droppedAt") ?? new Date(),
         inVault: form.get("vault") === "on",
         vaultAt: form.get("vault") === "on" ? new Date() : null,
         note: str(form, "note") || null,
@@ -180,21 +181,6 @@ export async function sellLoot(lootId: string, form: FormData) {
     data: { status: "SOLD", salePrice: price, soldById, soldAt: new Date(), receiverId: null },
   });
   await audit(me.id, "loot_sold", `${loot.itemName} ${price}`);
-  revalidateLoot(loot);
-  redirect(path);
-}
-
-export async function giveLoot(lootId: string, form: FormData) {
-  const { me, loot, path } = await loadLootForEdit(lootId, str(form, "back"));
-  const receiverId = str(form, "receiverId");
-  const value = parseNoah(str(form, "value"));
-  if (!receiverId) fail(path, "Itemi alan üyeyi seç.");
-  if (value === null || value < 0n) fail(path, "Itemin değerini gir; bu tutar alanın payından düşülür.");
-  await prisma.lootEntry.update({
-    where: { id: lootId },
-    data: { status: "GIVEN", receiverId, value, salePrice: null, soldById: null, soldAt: null, inVault: false },
-  });
-  await audit(me.id, "loot_given", `${loot.itemName} -> ${receiverId} (${value})`);
   revalidateLoot(loot);
   redirect(path);
 }
@@ -256,7 +242,13 @@ export async function addVaultItem(form: FormData) {
   if (!itemName) fail("/vault", "Item seç veya adını yaz.");
   const qty = Math.max(1, parseInt(str(form, "quantity") || "1", 10) || 1);
   const plus = str(form, "plusLevel");
-  const sessionId = str(form, "sessionId") || null;
+  const sessionId = str(form, "sessionId");
+  if (!sessionId) fail("/vault", "Itemin hangi farmdan geldiğini seç; pay sahipleri o farmın ekibi olur.");
+  const session = await prisma.farmSession.findUnique({ where: { id: sessionId } });
+  if (!session) fail("/vault", "Farm bulunamadı.");
+  const now = new Date();
+  // treat the item as dropped during the farm (at its end if added later), so the default owners are the party at that time
+  const droppedAt = session.endAt && now > session.endAt ? session.endAt : now < session.startAt ? session.startAt : now;
   const holderId = str(form, "holderId") || me.id;
   const value = parseNoah(str(form, "value"));
   await prisma.lootEntry.create({
@@ -271,12 +263,78 @@ export async function addVaultItem(form: FormData) {
       value: value ?? price * BigInt(qty),
       status: "IN_STOCK",
       inVault: true,
-      vaultAt: new Date(),
+      vaultAt: now,
+      droppedAt,
       note: str(form, "note") || null,
     },
   });
   await audit(me.id, "vault_manual_add", itemName);
   revalidatePath("/vault");
-  if (sessionId) revalidatePath(`/farms/${sessionId}`);
+  revalidatePath(`/farms/${sessionId}`);
   done("/vault", `${itemName} clan kasasına eklendi.`);
+}
+
+/** admin edits who has a share in an item; empty or same as default = back to the farm party */
+export async function setLootOwners(lootId: string, form: FormData) {
+  const { me, loot, path } = await loadLootForEdit(lootId, str(form, "back"));
+  if (loot.status === "COIN") fail(path, "Coin, farm ekibine süreye göre bölünür; pay sahibi seçilmez.");
+  const ids = [...new Set(form.getAll("ownerIds").map(String).filter(Boolean))];
+  if (ids.length === 0) fail(path, "En az bir pay sahibi seç.");
+  await prisma.$transaction([
+    prisma.lootOwner.deleteMany({ where: { lootId } }),
+    prisma.lootOwner.createMany({ data: ids.map((userId) => ({ lootId, userId })) }),
+    prisma.lootEntry.update({ where: { id: lootId }, data: { customOwners: true } }),
+  ]);
+  await audit(me.id, "loot_owners", `${loot.itemName}: ${ids.length} kişi`);
+  revalidateLoot(loot);
+  redirect(path);
+}
+
+export async function resetLootOwners(lootId: string, back?: string) {
+  const { me, loot, path } = await loadLootForEdit(lootId, back);
+  await prisma.$transaction([
+    prisma.lootOwner.deleteMany({ where: { lootId } }),
+    prisma.lootEntry.update({ where: { id: lootId }, data: { customOwners: false } }),
+  ]);
+  await audit(me.id, "loot_owners_reset", loot.itemName);
+  revalidateLoot(loot);
+  redirect(path);
+}
+
+/** add someone who joins the party after the farm started, with the time they joined */
+export async function addPartyMember(sessionId: string, form: FormData) {
+  const me = await requireRole("OFFICER");
+  const path = `/farms/${sessionId}`;
+  if (await isLocked(sessionId)) fail(path, "Hesaba dahil farmın ekibi değiştirilemez.");
+  const s = await prisma.farmSession.findUniqueOrThrow({ where: { id: sessionId } });
+  const userId = str(form, "userId");
+  if (!userId) fail(path, "Partiye katılan üyeyi seç.");
+  const joinedAt = readDate(form, "joinedAt") ?? new Date();
+  if (joinedAt < s.startAt) fail(path, "Katılış saati farm başlangıcından önce olamaz.");
+  if (s.endAt && joinedAt > s.endAt) fail(path, "Katılış saati farm bitişinden sonra olamaz.");
+  await prisma.sessionMember.upsert({
+    where: { sessionId_userId: { sessionId, userId } },
+    create: { sessionId, userId, joinedAt },
+    update: { joinedAt, leftAt: null },
+  });
+  await audit(me.id, "party_joined", `${sessionId} ${userId}`);
+  revalidatePath(path);
+  done(path, "Üye partiye eklendi; coin payı katıldığı saatten itibaren hesaplanır.");
+}
+
+/** fix a member's join / leave time (empty = from start / until end) */
+export async function setMemberTimes(sessionId: string, userId: string, form: FormData) {
+  const me = await requireRole("OFFICER");
+  const path = `/farms/${sessionId}`;
+  if (await isLocked(sessionId)) fail(path, "Hesaba dahil farmın ekibi değiştirilemez.");
+  const s = await prisma.farmSession.findUniqueOrThrow({ where: { id: sessionId } });
+  let joinedAt = readDate(form, "joinedAt");
+  let leftAt = readDate(form, "leftAt");
+  if (joinedAt && joinedAt <= s.startAt) joinedAt = null;
+  if (leftAt && s.endAt && leftAt >= s.endAt) leftAt = null;
+  if (joinedAt && leftAt && leftAt <= joinedAt) fail(path, "Ayrılış saati katılış saatinden sonra olmalı.");
+  await prisma.sessionMember.update({ where: { sessionId_userId: { sessionId, userId } }, data: { joinedAt, leftAt } });
+  await audit(me.id, "party_times", `${sessionId} ${userId}`);
+  revalidatePath(path);
+  done(path, "Saatler güncellendi.");
 }

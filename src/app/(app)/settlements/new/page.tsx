@@ -9,6 +9,7 @@ import { Alert, Badge, Empty, PageHeader, Stat } from "@/components/ui";
 import { Flash } from "@/components/Flash";
 import { CollectorReport } from "@/components/CollectorReport";
 import { LocalTime, SubmitButton } from "@/components/client";
+import { getTreasurer } from "@/lib/clan";
 import { createSettlement } from "../actions";
 
 export const metadata = { title: "Gün sonu hesabı" };
@@ -17,8 +18,8 @@ export default async function NewSettlementPage({ searchParams }: { searchParams
   const me = await requireRole("OFFICER");
   const sp = await searchParams;
   const selected = [sp.oturum].flat().filter((x): x is string => !!x);
-  const mode = first(sp.mod) === "dogrudan" ? "DIRECT" : "COLLECTOR";
-  const collectorId = mode === "COLLECTOR" ? first(sp.dagitici) || me.id : null;
+  const treasurer = await getTreasurer();
+  const collectorId = first(sp.dagitici) || treasurer?.id || me.id;
   const handover = first(sp.teslim) !== "0";
 
   // candidate sessions: anything with loot not yet settled, plus selected ones
@@ -46,7 +47,7 @@ export default async function NewSettlementPage({ searchParams }: { searchParams
     <>
       <PageHeader
         title="Gün sonu hesabı"
-        subtitle="Günün farmlarını seç ve farmı teslim alacak üyeyi belirle. Toplam kazanç tüm katılımcılara eşit bölünür."
+        subtitle="Günün farmlarını seç. Herkes elindekini kasa hesabına teslim eder, kasa herkese payını öder. Coin farmda geçirilen süreye göre, satılan item ise pay sahiplerine eşit bölünür."
         actions={<Link href="/settlements" className="btn-ghost">← Hesaplar</Link>}
       />
       <Flash sp={sp} />
@@ -69,27 +70,11 @@ export default async function NewSettlementPage({ searchParams }: { searchParams
           )}
         </div>
         <div>
-          <h2 className="mb-3 font-semibold">2. Paylaşım şekli</h2>
+          <h2 className="mb-3 font-semibold">2. Kasa hesabı</h2>
           <div className="grid gap-3 md:grid-cols-2">
-            <label className="flex cursor-pointer gap-3 rounded-lg border border-line bg-bg p-3 text-sm has-[:checked]:border-gold/60 has-[:checked]:bg-gold/5">
-              <input type="radio" name="mod" value="dagitici" defaultChecked={mode === "COLLECTOR"} className="mt-1 accent-[#d4a64a]" />
-              <span>
-                <b>Dağıtıcı üye üzerinden</b>
-                <span className="block text-mute">Herkes farmı seçilen üyeye teslim eder, o üye herkese payını öder.</span>
-              </span>
-            </label>
-            <label className="flex cursor-pointer gap-3 rounded-lg border border-line bg-bg p-3 text-sm has-[:checked]:border-gold/60 has-[:checked]:bg-gold/5">
-              <input type="radio" name="mod" value="dogrudan" defaultChecked={mode === "DIRECT"} className="mt-1 accent-[#d4a64a]" />
-              <span>
-                <b>Doğrudan</b>
-                <span className="block text-mute">Üyeler birbirine öder, en az sayıda trade ile.</span>
-              </span>
-            </label>
-          </div>
-          <div className="mt-3 grid gap-3 md:grid-cols-2">
             <div>
-              <label className="label">Farmı teslim alacak üye (dağıtıcı)</label>
-              <select name="dagitici" className="input" defaultValue={collectorId ?? me.id}>
+              <label className="label">Farmı teslim alacak üye (clan kasası)</label>
+              <select name="dagitici" className="input" defaultValue={collectorId}>
                 {people.map((p) => (
                   <option key={p.id} value={p.id}>{p.characterName}</option>
                 ))}
@@ -97,7 +82,7 @@ export default async function NewSettlementPage({ searchParams }: { searchParams
             </div>
             <label className="flex items-end gap-2 pb-2 text-sm">
               <input type="checkbox" name="teslim" value="1" defaultChecked={handover} className="accent-[#d4a64a]" />
-              Satılmayan itemler de dağıtıcıya teslim edilsin
+              Satılmayan itemler de kasaya teslim edilsin
               <input type="hidden" name="teslim" value="0" />
             </label>
           </div>
@@ -112,72 +97,29 @@ export default async function NewSettlementPage({ searchParams }: { searchParams
           {preview.unsold.length > 0 && (
             <Alert tone="gold">
               {preview.unsold.length} item henüz satılmadı (tahmini {noahShort(preview.unsold.reduce((a, l) => a + l.value, 0n))}). Bu hesaba Noah olarak girmez;
-              {mode === "COLLECTOR" && handover ? " dağıtıcıya teslim edilir," : ""} satılınca aynı farmlar için ek hesap yapılır.
+              {handover ? " kasaya teslim edilir," : ""} satılınca aynı farmlar için ek hesap yapılır.
             </Alert>
           )}
           <div className="mb-6 grid gap-4 sm:grid-cols-3">
             <Stat label="Toplam" value={noahShort(preview.total)} hint={`${noah(preview.total)} Noah`} accent />
             <Stat label="Kişi sayısı" value={new Set(preview.sessions.flatMap((x) => x.members.map((m) => m.userId))).size} />
-            <Stat label="Kişi başı" value={noahShort(preview.perShare)} hint={`${noah(preview.perShare)} Noah`} />
+            <Stat label="Ortalama pay" value={noahShort(preview.perShare)} hint="Coin süreye, item pay sahiplerine göre bölünür" />
           </div>
 
-          {mode === "COLLECTOR" && collectorId ? (
-            <CollectorReport
-              rows={buildCollectorRows(collectorId, preview.shares, preview.transfers, preview.included.map((i) => i.loot), handedItems)}
-              collectorId={collectorId}
-              name={name}
-            />
-          ) : (
-            <div className="grid gap-6 xl:grid-cols-2">
-              <div className="card overflow-x-auto p-0">
-                <h3 className="px-5 pt-5 font-semibold">Pay tablosu</h3>
-                <table className="table mt-2">
-                  <thead>
-                    <tr>
-                      <th>Üye</th>
-                      <th className="text-right">Elinde olan</th>
-                      <th className="text-right">Payı</th>
-                      <th className="text-right">Fark</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {preview.shares.map((s) => (
-                      <tr key={s.userId}>
-                        <td>{name(s.userId)}</td>
-                        <td className="text-right">{noah(s.held)}</td>
-                        <td className="text-right text-gold">{noah(s.share)}</td>
-                        <td className={`text-right ${s.balance > 0n ? "text-red-300" : s.balance < 0n ? "text-green-300" : "text-mute"}`}>
-                          {s.balance > 0n ? `${noah(s.balance)} verecek` : s.balance < 0n ? `${noah(-s.balance)} alacak` : "tamam"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="card">
-                <h3 className="mb-2 font-semibold">Kim kime ne verecek ({preview.transfers.length} işlem)</h3>
-                {preview.transfers.length === 0 ? (
-                  <Empty>Transfer gerekmiyor.</Empty>
-                ) : (
-                  <ul className="space-y-2 text-sm">
-                    {preview.transfers.map((t, i) => (
-                      <li key={i} className="flex justify-between rounded-lg border border-line bg-bg px-3 py-2">
-                        <span><b>{name(t.fromId)}</b> → <b>{name(t.toId)}</b></span>
-                        <span className="text-gold">{noah(t.amount)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </div>
-          )}
+          <CollectorReport
+            rows={buildCollectorRows(collectorId, preview.shares, preview.transfers, preview.included.map((i) => i.loot), handedItems)}
+            collectorId={collectorId}
+            name={name}
+          />
 
           <div className="card mt-6">
             <h3 className="mb-2 font-semibold">Hesaba giren kayıtlar ({preview.included.length})</h3>
             <ul className="grid max-h-64 gap-x-8 gap-y-1 overflow-y-auto text-sm md:grid-cols-2">
-              {preview.included.map(({ loot, amount }) => (
+              {preview.included.map(({ loot, amount, beneficiaries }) => (
                 <li key={loot.id} className="flex justify-between gap-2">
-                  <span>{itemLabel(loot)} <span className="text-xs text-mute">({lootStatusLabel[loot.status]})</span></span>
+                  <span>
+                    {itemLabel(loot)} <span className="text-xs text-mute">({lootStatusLabel[loot.status]} · {beneficiaries.length} kişiye)</span>
+                  </span>
                   <span>{noah(amount)}</span>
                 </li>
               ))}
@@ -188,8 +130,7 @@ export default async function NewSettlementPage({ searchParams }: { searchParams
             {selected.map((id) => (
               <input key={id} type="hidden" name="sessionIds" value={id} />
             ))}
-            <input type="hidden" name="mode" value={mode} />
-            {collectorId && <input type="hidden" name="collectorId" value={collectorId} />}
+            <input type="hidden" name="collectorId" value={collectorId} />
             {handover && <input type="hidden" name="handover" value="1" />}
             <div className="min-w-64 flex-1">
               <label className="label">Hesap adı</label>

@@ -46,7 +46,14 @@ export default async function MemberPage({ params, searchParams }: { params: Pro
             {user.level ? ` · Lv ${user.level}` : ""} {!user.active && <Badge>Pasif</Badge>}
           </>
         }
-        actions={<Link href="/members" className="btn-ghost">← Üyeler</Link>}
+        actions={
+          <>
+            <Link href="/members" className="btn-ghost">← Üyeler</Link>
+            {(me.id === user.id || hasRole(me, "OFFICER")) && (
+              <Link href={me.id === user.id ? "/payim" : `/payim?uye=${user.id}`} className="btn-primary">Payını gör</Link>
+            )}
+          </>
+        }
       />
       <Flash sp={sp} />
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

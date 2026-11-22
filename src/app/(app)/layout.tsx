@@ -9,6 +9,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const nav = (
     <nav className="flex flex-col gap-1">
       <NavLink href="/">Ana panel</NavLink>
+      <NavLink href="/payim">Payım</NavLink>
       <NavLink href="/farms">Farm oturumları</NavLink>
       <NavLink href="/settlements">Gün sonu hesapları</NavLink>
       <NavLink href="/transfers">Ödemeler</NavLink>

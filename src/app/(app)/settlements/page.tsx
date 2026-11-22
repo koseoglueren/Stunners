@@ -40,9 +40,9 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
                 <th>Hesap</th>
                 <th>Tarih</th>
                 <th>Farmlar</th>
-                <th>Dağıtıcı</th>
+                <th>Kasa hesabı</th>
                 <th className="text-right">Toplam</th>
-                <th className="text-right">Kişi başı</th>
+                <th className="text-right">Ortalama pay</th>
                 <th>Ödemeler</th>
               </tr>
             </thead>

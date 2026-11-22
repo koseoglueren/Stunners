@@ -17,7 +17,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Sea
   ]);
   return (
     <>
-      <PageHeader title="Ayarlar" subtitle="Paylaşım kuralı: kesinti yok, seçilen farmların toplam kazancı tüm katılımcılara eşit bölünür." />
+      <PageHeader title="Ayarlar" subtitle="Paylaşım kuralı: kesinti yok. Coin farm ekibine farmda geçirilen süreye göre, satılan item pay sahiplerine eşit bölünür. Herkes kasa hesabına teslim eder, kasa herkese payını öder." />
       <Flash sp={sp} />
       <div className="grid gap-6 xl:grid-cols-2">
         <div className="card">

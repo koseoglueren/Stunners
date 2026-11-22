@@ -60,7 +60,7 @@ export function CollectorReport({ rows, collectorId, name, live }: Props) {
               <tr key={r.userId} className={live && r.userId === live.me ? "bg-gold/5" : ""}>
                 <td className="font-medium">
                   {name(r.userId)}
-                  {r.userId === collectorId && <div className="text-xs text-gold">dağıtıcı</div>}
+                  {r.userId === collectorId && <div className="text-xs text-gold">kasa hesabı</div>}
                 </td>
                 <td className="text-sm">
                   {r.lines.length === 0 ? (
