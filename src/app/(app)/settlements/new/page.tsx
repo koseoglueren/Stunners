@@ -115,10 +115,10 @@ export default async function NewSettlementPage({ searchParams }: { searchParams
           <div className="card mt-6">
             <h3 className="mb-2 font-semibold">Hesaba giren kayıtlar ({preview.included.length})</h3>
             <ul className="grid max-h-64 gap-x-8 gap-y-1 overflow-y-auto text-sm md:grid-cols-2">
-              {preview.included.map(({ loot, amount, beneficiaries }) => (
+              {preview.included.map(({ loot, amount, beneficiaries, holderId }) => (
                 <li key={loot.id} className="flex justify-between gap-2">
                   <span>
-                    {itemLabel(loot)} <span className="text-xs text-mute">({lootStatusLabel[loot.status]} · {beneficiaries.length} kişiye)</span>
+                    {itemLabel(loot)} <span className="text-xs text-mute">({lootStatusLabel[loot.status]} · {loot.status === "SOLD" ? "satan" : "getiren"}: <b className="text-ink">{name(holderId)}</b> · {beneficiaries.length} kişiye)</span>
                   </span>
                   <span>{noah(amount)}</span>
                 </li>

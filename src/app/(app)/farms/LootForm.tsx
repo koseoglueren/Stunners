@@ -43,11 +43,14 @@ export function LootForm({
   items,
   members,
   defaultHolder,
+  coinDone = [],
 }: {
   action: (form: FormData) => void;
   items: Item[];
   members: Member[];
   defaultHolder: string;
+  /** members who already handed in their coin for this farm (hidden from the coin list) */
+  coinDone?: string[];
 }) {
   const [cat, setCat] = useState("COIN");
   const [itemId, setItemId] = useState("");
@@ -56,6 +59,9 @@ export function LootForm({
   const item = list.find((i) => i.id === itemId);
   const suggested = item ? BigInt(item.price) * BigInt(qty || 1) : null;
   const isCoin = cat === "COIN";
+  const coinLeft = members.filter((m) => !coinDone.includes(m.id));
+  const holders = isCoin && coinLeft.length ? coinLeft : members;
+  const holderDefault = isCoin ? (holders[0]?.id ?? "") : defaultHolder;
 
   return (
     <form action={action} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
@@ -105,11 +111,16 @@ export function LootForm({
       </div>
       <div className={isCoin ? "lg:col-span-2" : ""}>
         <label className="label">{isCoin ? "Coin kimde" : "Item kimde"}</label>
-        <select name="holderId" className="input" defaultValue={defaultHolder}>
-          {members.map((m) => (
+        <select key={`${cat}-${holders.length}`} name="holderId" className="input" defaultValue={holderDefault}>
+          {holders.map((m) => (
             <option key={m.id} value={m.id}>{m.name}</option>
           ))}
         </select>
+        {isCoin && coinDone.length > 0 && (
+          <p className="mt-1 text-xs text-mute">
+            {coinLeft.length ? `Coin girilmeyen: ${coinLeft.length} kişi` : "Herkesin coini girildi."}
+          </p>
+        )}
       </div>
       <div className={isCoin ? "sm:col-span-2 lg:col-span-5" : "sm:col-span-2 lg:col-span-3"}>
         <label className="label">Not (isteğe bağlı)</label>

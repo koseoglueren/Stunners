@@ -143,7 +143,10 @@ export default async function SettlementPage({ params, searchParams }: { params:
                 <li key={l.id} className="flex justify-between gap-2">
                   <span>
                     {l.itemName}{l.plusLevel !== null ? ` +${l.plusLevel}` : ""}{l.quantity > 1 ? ` ×${l.quantity}` : ""}{" "}
-                    <span className="text-xs text-mute">({lootStatusLabel[l.status]})</span>
+                    <span className="text-xs text-mute">
+                      ({lootStatusLabel[l.status]} ·{" "}
+                      {l.status === "SOLD" ? <>satan: <b className="text-ink">{(l.soldBy ?? l.holder).characterName}</b></> : <>getiren: <b className="text-ink">{l.holder.characterName}</b></>})
+                    </span>
                   </span>
                   <span>{noah(lootContribution(l)?.amount ?? 0n)}</span>
                 </li>

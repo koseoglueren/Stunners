@@ -8,7 +8,7 @@ import { allocate, lootContribution } from "@/lib/settlement";
 import { itemOwners, lootBeneficiaries, presence } from "@/lib/shares";
 import { Badge, Empty, MemberLink, PageHeader, Stat } from "@/components/ui";
 import { Flash } from "@/components/Flash";
-import { DateTimeInput, LocalTime, SubmitButton } from "@/components/client";
+import { ActionMenu, DateTimeInput, LocalTime, SubmitButton } from "@/components/client";
 import { LootForm } from "../LootForm";
 import { MemberPicker } from "../MemberPicker";
 import {
@@ -153,23 +153,20 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
                     </span>
                     <span className="text-gold" title="Şu ana kadarki tahmini payı">{noahShort(estimate.get(m.userId) ?? 0n)}</span>
                   </div>
-                  {(late || early) && (
-                    <div className="text-xs text-orange-300">
-                      {late && <>Katıldı: <LocalTime value={m.joinedAt} mode="time" /> </>}
-                      {early && <>Ayrıldı: <LocalTime value={m.leftAt} mode="time" /> </>}· {durationText(p.from, p.to)} farmda
-                    </div>
-                  )}
+                  <div className={`text-xs ${late || early ? "text-orange-300" : "text-mute"}`}>
+                    Başlangıç: <LocalTime value={p.from} /> · Bitiş: {s.endAt || early ? <LocalTime value={p.to} /> : "devam ediyor"} · {durationText(p.from, p.to)}
+                  </div>
                   {officer && !locked && (
                     <details className="mt-1">
-                      <summary className="cursor-pointer text-xs text-mute hover:text-gold">Katılış / ayrılış saati</summary>
+                      <summary className="cursor-pointer text-xs text-mute hover:text-gold">Saatleri düzenle</summary>
                       <form action={setMemberTimes.bind(null, s.id, m.userId)} className="mt-2 space-y-2">
                         <div>
-                          <label className="label">Katıldığı saat (boş = farm başı)</label>
-                          <DateTimeInput name="joinedAt" defaultValue={m.joinedAt?.toISOString() ?? ""} />
+                          <label className="label">Başlangıç saati</label>
+                          <DateTimeInput name="joinedAt" defaultValue={p.from.toISOString()} />
                         </div>
                         <div>
-                          <label className="label">Ayrıldığı saat (boş = farm sonu)</label>
-                          <DateTimeInput name="leftAt" defaultValue={m.leftAt?.toISOString() ?? ""} />
+                          <label className="label">Bitiş saati {s.endAt ? "" : "(boş = farm bitince)"}</label>
+                          <DateTimeInput name="leftAt" defaultValue={s.endAt || m.leftAt ? p.to.toISOString() : ""} />
                         </div>
                         <SubmitButton className="btn-ghost btn-sm">Kaydet</SubmitButton>
                       </form>
@@ -250,6 +247,7 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
                 items={items.map((i) => ({ id: i.id, name: i.name, category: i.category, price: i.defaultPrice.toString() }))}
                 members={memberOpts}
                 defaultHolder={isMember ? me.id : (memberOpts[0]?.id ?? "")}
+                coinDone={[...new Set(s.loot.filter((l) => l.status === "COIN").map((l) => l.holderId))]}
               />
               <p className="mt-2 text-xs text-mute">Miktarları 150m, 1,5b, 250k veya 150.000.000 şeklinde yazabilirsin.</p>
             </div>
@@ -365,9 +363,7 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
                           </td>
                           <td className="text-right">
                             {editable && (
-                              <details className="relative inline-block text-left">
-                                <summary className="btn-ghost btn-sm cursor-pointer list-none">İşlem</summary>
-                                <div className="absolute right-0 z-20 mt-1 w-72 space-y-3 rounded-lg border border-line bg-panel-2 p-3 shadow-xl">
+                              <ActionMenu title={`${l.itemName}${l.plusLevel !== null ? ` +${l.plusLevel}` : ""}${l.quantity > 1 ? ` ×${l.quantity}` : ""}`}>
                                   {l.status !== "COIN" && (
                                     <form action={sellLoot.bind(null, l.id)} className="space-y-2">
                                       <div className="text-xs font-semibold text-mute uppercase">Satıldı</div>
@@ -414,8 +410,7 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
                                       <SubmitButton className="btn-danger btn-sm" confirm="Kayıt silinsin mi?">Sil</SubmitButton>
                                     </form>
                                   </div>
-                                </div>
-                              </details>
+                                </ActionMenu>
                             )}
                           </td>
                         </tr>
