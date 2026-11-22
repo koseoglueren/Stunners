@@ -12,7 +12,7 @@ export async function buildSettlementPreview(sessionIds: string[], collectorId: 
       members: { include: { user: true } },
       loot: {
         where: { settlementId: null },
-        include: { holder: true, soldBy: true, receiver: true, owners: { include: { user: true } } },
+        include: { holder: true, soldBy: true, receiver: true, handedOverBy: true, owners: { include: { user: true } } },
       },
     },
     orderBy: { startAt: "asc" },
@@ -30,6 +30,7 @@ export async function buildSettlementPreview(sessionIds: string[], collectorId: 
   for (const l of included) {
     const u = l.loot.status === "SOLD" ? l.loot.soldBy : l.loot.status === "GIVEN" ? l.loot.receiver : l.loot.holder;
     if (u) users.set(u.id, u);
+    if (l.loot.handedOverBy) users.set(l.loot.handedOverBy.id, l.loot.handedOverBy);
   }
   const unsold = sessions.flatMap((s) => s.loot.filter((l) => l.status === "IN_STOCK"));
   for (const l of unsold) users.set(l.holder.id, l.holder);

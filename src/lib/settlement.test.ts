@@ -25,23 +25,22 @@ test("allocate by weight", () => {
   assert.equal([...m.values()].reduce((x, y) => x + y, 0n), 1000n);
 });
 
-test("collector: everyone delivers what they hold, collector pays every share", () => {
+test("vault pays every member their share", () => {
   const r = computeSettlement(
     [
-      { amount: 120_000_000n, holderId: "a", beneficiaries: eq("a", "b", "c", "d") },
-      { amount: 80_000_000n, holderId: "b", beneficiaries: eq("a", "b", "c", "d") },
+      { amount: 120_000_000n, holderId: "k", beneficiaries: eq("a", "b", "c", "d") },
+      { amount: 80_000_000n, holderId: "k", beneficiaries: eq("a", "b", "c", "d") },
     ],
     "k",
   );
   assert.equal(r.total, 200_000_000n);
   assert.equal(r.perShare, 50_000_000n);
-  const final = new Map(r.shares.map((s) => [s.userId, s.held]));
+  assert.equal(r.transfers.length, 4);
   for (const t of r.transfers) {
-    final.set(t.fromId, final.get(t.fromId)! - t.amount);
-    final.set(t.toId, final.get(t.toId)! + t.amount);
+    assert.equal(t.kind, "PAYOUT");
+    assert.equal(t.fromId, "k");
+    assert.equal(t.amount, 50_000_000n);
   }
-  for (const s of r.shares) if (s.userId !== "k") assert.equal(final.get(s.userId), s.share);
-  assert.equal(final.get("k"), 0n);
 });
 
 test("sold item goes only to its owners", () => {
@@ -99,4 +98,26 @@ test("parseNoah understands shorthand", () => {
   assert.equal(parseNoah("250k"), 250_000n);
   assert.equal(parseNoah("150.000.000"), 150_000_000n);
   assert.equal(parseNoah("abc"), null);
+});
+
+test("sessionEarnings splits coin by minutes and sold items among owners present at drop", async () => {
+  const { sessionEarnings } = await import("./earnings");
+  const t = (h: number) => new Date(Date.UTC(2026, 10, 22, h));
+  const base = { holderId: "a", soldById: null, receiverId: null, customOwners: false, salePrice: null };
+  const r = sessionEarnings({
+    startAt: t(10),
+    endAt: t(12),
+    members: [
+      { userId: "a", joinedAt: null, leftAt: null },
+      { userId: "b", joinedAt: t(11), leftAt: null },
+    ],
+    loot: [
+      { ...base, status: "COIN" as const, value: 300n, droppedAt: t(12) },
+      { ...base, status: "SOLD" as const, value: 0n, salePrice: 100n, droppedAt: t(10) },
+      { ...base, status: "IN_STOCK" as const, value: 999n, droppedAt: t(11) },
+    ],
+  });
+  assert.equal(r.total, 400n);
+  assert.equal(r.perMember.get("a"), 300n);
+  assert.equal(r.perMember.get("b"), 100n);
 });

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type InputHTMLAttributes, type ReactNode } from "react";
 import { useFormStatus } from "react-dom";
 
 export function SubmitButton({ children, className = "btn-primary", confirm: msg }: { children: ReactNode; className?: string; confirm?: string }) {
@@ -33,7 +33,14 @@ export function LocalTime({ value, mode = "datetime" }: { value: Date | string |
       : mode === "time"
         ? { hour: "2-digit", minute: "2-digit" }
         : { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" };
-  return <time suppressHydrationWarning dateTime={d.toISOString()}>{dtf(opts).format(d)}</time>;
+  // server renders in Istanbul time (the clan's zone); the browser then switches to the viewer's own zone
+  return <ClientTime iso={d.toISOString()} server={dtf({ ...opts, timeZone: "Europe/Istanbul" }).format(d)} opts={opts} />;
+}
+
+function ClientTime({ iso, server, opts }: { iso: string; server: string; opts: Intl.DateTimeFormatOptions }) {
+  const [text, setText] = useState(server);
+  useEffect(() => setText(dtf(opts).format(new Date(iso))), [iso, opts]);
+  return <time dateTime={iso}>{text}</time>;
 }
 
 function toLocalInput(d: Date) {
@@ -108,16 +115,28 @@ export function CopyButton({ text, label = "Özeti kopyala" }: { text: string; l
 }
 
 /** "İşlem" button that opens its actions in a centered popup instead of a cramped dropdown */
-export function ActionMenu({ title, label = "İşlem", children }: { title: ReactNode; label?: string; children: ReactNode }) {
+export function ActionMenu({
+  title,
+  label = "İşlem",
+  children,
+  wide,
+  buttonClassName = "btn-ghost btn-sm",
+}: {
+  title: ReactNode;
+  label?: ReactNode;
+  children: ReactNode;
+  wide?: boolean;
+  buttonClassName?: string;
+}) {
   const ref = useRef<HTMLDialogElement>(null);
   return (
     <>
-      <button type="button" className="btn-ghost btn-sm" onClick={() => ref.current?.showModal()}>
+      <button type="button" className={buttonClassName} onClick={() => ref.current?.showModal()}>
         {label}
       </button>
       <dialog
         ref={ref}
-        className="m-auto w-[min(26rem,calc(100vw-2rem))] rounded-xl border border-line bg-panel-2 p-0 text-left text-ink shadow-2xl backdrop:bg-black/70"
+        className={`m-auto ${wide ? "w-[min(44rem,calc(100vw-2rem))]" : "w-[min(26rem,calc(100vw-2rem))]"} rounded-xl border border-line bg-panel-2 p-0 text-left text-ink shadow-2xl backdrop:bg-black/70`}
         onClick={(e) => {
           if (e.target === ref.current) ref.current?.close();
         }}
@@ -131,5 +150,24 @@ export function ActionMenu({ title, label = "İşlem", children }: { title: Reac
         <div className="max-h-[75vh] space-y-3 overflow-y-auto p-4">{children}</div>
       </dialog>
     </>
+  );
+}
+
+/** Noah amount input: plain digits are shown with thousand dots while typing (10000000 -> 10.000.000); "15m" style still works */
+export function NoahInput({ defaultValue = "", ...rest }: Omit<InputHTMLAttributes<HTMLInputElement>, "onChange" | "value" | "defaultValue"> & { defaultValue?: string }) {
+  const [v, setV] = useState(defaultValue);
+  return (
+    <input
+      {...rest}
+      autoComplete="off"
+      value={v}
+      onChange={(e) => {
+        const raw = e.target.value;
+        if (/^[\d.]*$/.test(raw)) {
+          const digits = raw.replace(/\./g, "").replace(/^0+(?=\d)/, "");
+          setV(digits.replace(/\B(?=(\d{3})+(?!\d))/g, "."));
+        } else setV(raw);
+      }}
+    />
   );
 }

@@ -8,7 +8,7 @@ import { allocate, lootContribution } from "@/lib/settlement";
 import { itemOwners, lootBeneficiaries, presence } from "@/lib/shares";
 import { Badge, Empty, MemberLink, PageHeader, Stat } from "@/components/ui";
 import { Flash } from "@/components/Flash";
-import { ActionMenu, DateTimeInput, LocalTime, SubmitButton } from "@/components/client";
+import { ActionMenu, DateTimeInput, LocalTime, SubmitButton, NoahInput } from "@/components/client";
 import { LootForm } from "../LootForm";
 import { CollectForm } from "../CollectForm";
 import { MemberPicker } from "../MemberPicker";
@@ -94,6 +94,17 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
   const unsettledLoot = s.loot.filter((l) => !l.settlementId && lootContribution(l));
   const vaultItems = stock.filter((l) => l.inVault);
   const vaultValue = vaultItems.reduce((a, l) => a + l.value, 0n);
+  const pazarMap = new Map<string, { label: string; qty: number; value: bigint; owners: number[] }>();
+  for (const l of vaultItems) {
+    const label = `${l.itemName}${l.plusLevel !== null ? ` +${l.plusLevel}` : ""}`;
+    const g = pazarMap.get(label) ?? { label, qty: 0, value: 0n, owners: [] };
+    g.qty += l.quantity;
+    g.value += l.value;
+    const n = ownersOf(l).length;
+    if (!g.owners.includes(n)) g.owners.push(n);
+    pazarMap.set(label, g);
+  }
+  const pazarGroups = [...pazarMap.values()].sort((a, b) => b.qty - a.qty || a.label.localeCompare(b.label, "tr"));
   const soldWaiting = s.loot.filter((l) => l.status === "SOLD" && !l.settlementId);
   const soldWaitingTotal = soldWaiting.reduce((a, l) => a + (l.salePrice ?? 0n), 0n);
 
@@ -275,7 +286,7 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
                     items={items.map((i) => ({ id: i.id, name: i.name, category: i.category, price: i.defaultPrice.toString() }))}
                     members={memberOpts}
                     defaultHolder={isMember ? me.id : (memberOpts[0]?.id ?? "")}
-                    coinDone={[...new Set(s.loot.filter((l) => l.status === "COIN").map((l) => l.holderId))]}
+                    coinDone={[...new Set(s.loot.filter((l) => l.status === "COIN").map((l) => l.handedOverById ?? l.holderId))]}
                   />
                 </div>
               </details>
@@ -324,7 +335,7 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
           {(vaultItems.length > 0 || (locked && soldWaiting.length > 0)) && (
             <div className="card border-warn/40" id="pazar">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <h2 className="font-semibold">Pazarda satılmayı bekleyenler ({vaultItems.length})</h2>
+                <h2 className="font-semibold">Pazarda satılmayı bekleyenler ({vaultItems.reduce((a, l) => a + l.quantity, 0)} adet)</h2>
                 <Link href="/vault" className="text-sm text-gold hover:underline">Clan kasası →</Link>
               </div>
               <p className="mb-3 text-sm text-mute">
@@ -333,15 +344,13 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
               </p>
               {vaultItems.length > 0 && (
                 <ul className="divide-y divide-line text-sm">
-                  {vaultItems.map((l) => (
-                    <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                  {pazarGroups.map((g) => (
+                    <li key={g.label} className="flex flex-wrap items-center justify-between gap-2 py-2">
                       <span>
-                        {l.itemName}
-                        {l.plusLevel !== null && <span className="text-gold"> +{l.plusLevel}</span>}
-                        {l.quantity > 1 && <span className="text-mute"> ×{l.quantity}</span>}
-                        <span className="text-xs text-mute"> · {l.holder.characterName} tutuyor · pay: {ownersOf(l).length} kişi</span>
+                        {g.label} <b className="text-gold">{g.qty} Adet</b>
+                        <span className="text-xs text-mute"> · pay: {g.owners.join(" / ")} kişi</span>
                       </span>
-                      <span className="text-mute">~{noah(l.value)}</span>
+                      <span className="text-mute">~{noah(g.value)}</span>
                     </li>
                   ))}
                   <li className="flex justify-between py-2 font-medium">
@@ -435,7 +444,7 @@ export default async function FarmPage({ params, searchParams }: { params: Promi
                                   {l.status !== "COIN" && (
                                     <form action={sellLoot.bind(null, l.id)} className="space-y-2">
                                       <div className="text-xs font-semibold text-mute uppercase">Satıldı</div>
-                                      <input name="salePrice" className="input" placeholder="Satış fiyatı (örn. 45m)" defaultValue={l.salePrice ? noah(l.salePrice) : ""} required />
+                                      <NoahInput name="salePrice" className="input" placeholder="Satış fiyatı (örn. 45m)" defaultValue={l.salePrice ? noah(l.salePrice) : ""} required />
                                       <select name="soldById" className="input" defaultValue={l.soldById ?? l.holderId}>
                                         {allOpts.map((m) => (
                                           <option key={m.id} value={m.id}>Satan: {m.name}</option>
