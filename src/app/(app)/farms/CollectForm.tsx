@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { SubmitButton } from "@/components/client";
+import { SubmitButton, NoahInput } from "@/components/client";
 import { PlusSelect, hasLevel } from "./LootForm";
 
 type Item = { id: string; name: string; category: string; price: string };
@@ -49,7 +49,7 @@ function ItemRow({ row, items, onChange, onRemove }: { row: Row; items: Item[]; 
       <div className="sm:col-span-2">
         <label className="label">Değer</label>
         <div className="flex gap-1">
-          <input name="ival" className="input" placeholder="katalog" />
+          <NoahInput name="ival" className="input" placeholder="katalog" />
           <button type="button" onClick={onRemove} className="btn-ghost btn-sm" aria-label="Satırı sil">✕</button>
         </div>
       </div>
@@ -91,7 +91,7 @@ export function CollectForm({
         </div>
         <div>
           <label className="label">Ondan alınan coin (Noah)</label>
-          <input name="coin" className="input" placeholder="örn. 15m veya 15.000.000" />
+          <NoahInput name="coin" className="input" placeholder="örn. 15m veya 15.000.000" />
         </div>
       </div>
       {rows.map((r) => (

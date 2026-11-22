@@ -8,8 +8,7 @@ import { allocate } from "@/lib/settlement";
 import { itemOwners } from "@/lib/shares";
 import { Badge, Empty, PageHeader, Stat } from "@/components/ui";
 import { Flash } from "@/components/Flash";
-import { ActionMenu, LocalTime, SubmitButton } from "@/components/client";
-import { setTransferStatus } from "../settlements/actions";
+import { ActionMenu, LocalTime, SubmitButton, NoahInput } from "@/components/client";
 import { addVaultItem, deleteLoot, resetLootOwners, sellLoot, sellMany, setLootOwners, setLootVault, updateLootValue } from "../farms/actions";
 import { setTreasurer } from "./actions";
 import { VaultForm } from "./VaultForm";
@@ -37,8 +36,7 @@ export default async function VaultPage({ searchParams }: { searchParams: Search
   const officer = hasRole(me, "OFFICER");
   const mine = first(sp.benim) === "1";
 
-  const [allDeliveries, treasurer, vaultAll, farmStock, soldWaiting, payouts, deliveries, users, items, farms] = await Promise.all([
-    prisma.transfer.findMany({ where: { kind: "DELIVERY" }, select: { fromId: true, amount: true, status: true } }),
+  const [treasurer, vaultAll, farmStock, soldWaiting, payouts, users, items, farms, itemFarms] = await Promise.all([
     getTreasurer(),
     prisma.lootEntry.findMany({
       where: { status: "IN_STOCK", inVault: true },
@@ -58,17 +56,21 @@ export default async function VaultPage({ searchParams }: { searchParams: Search
       orderBy: { soldAt: "desc" },
     }),
     prisma.transfer.findMany({ where: { kind: "PAYOUT" }, select: { toId: true, amount: true, status: true } }),
-    prisma.transfer.findMany({
-      where: { kind: "DELIVERY" },
-      include: { from: true, settlement: { select: { id: true, title: true, lockedAt: true } } },
-      orderBy: [{ settlement: { createdAt: "desc" } }, { amount: "desc" }],
-      take: 60,
-    }),
     prisma.user.findMany({ where: { active: true }, orderBy: { characterName: "asc" } }),
     officer ? prisma.itemCatalog.findMany({ where: { active: true }, orderBy: { name: "asc" } }) : [],
     officer
       ? prisma.farmSession.findMany({ include: { location: true, _count: { select: { members: true } } }, orderBy: { startAt: "desc" }, take: 40 })
       : [],
+    prisma.farmSession.findMany({
+      where: { loot: { some: { status: { not: "COIN" } } } },
+      include: {
+        location: true,
+        members: true,
+        loot: { where: { status: { not: "COIN" } }, include: { owners: true }, orderBy: { droppedAt: "asc" } },
+      },
+      orderBy: { startAt: "desc" },
+      take: 30,
+    }),
   ]);
 
   const nameOf = new Map(users.map((u) => [u.id, u.characterName]));
@@ -88,20 +90,27 @@ export default async function VaultPage({ searchParams }: { searchParams: Search
   const soldParts = soldWaiting.map((l) => ({ l, parts: allocate(l.salePrice ?? 0n, ownersOf(l).map((userId) => ({ userId, weight: 1n }))) }));
   const soldByMember = new Map<string, bigint>();
   for (const { parts } of soldParts) for (const [id, v] of parts) soldByMember.set(id, (soldByMember.get(id) ?? 0n) + v);
-  const toDeliver = new Map<string, bigint>();
-  for (const d of allDeliveries) {
-    if (d.status === "RECEIVED") row(d.fromId).delivered += d.amount;
-    else toDeliver.set(d.fromId, (toDeliver.get(d.fromId) ?? 0n) + d.amount);
-  }
   const clanCoin = [...bal.values()].reduce((a, b) => a + b.pending, 0n);
   const soldTotal = soldWaiting.reduce((a, l) => a + (l.salePrice ?? 0n), 0n);
-  const deliveryPending = [...toDeliver.values()].reduce((a, v) => a + v, 0n);
   const soldSessions = [...new Set(soldWaiting.map((l) => l.sessionId).filter((x): x is string => !!x))];
   const myPending = bal.get(me.id)?.pending ?? 0n;
-  const balanceRows = [...new Set([...bal.keys(), ...soldByMember.keys(), ...toDeliver.keys()])]
-    .map((id) => ({ id, ...(bal.get(id) ?? { pending: 0n, paid: 0n, delivered: 0n }), sold: soldByMember.get(id) ?? 0n, owes: toDeliver.get(id) ?? 0n }))
-    .filter((r) => r.pending || r.paid || r.sold || r.owes)
+  const balanceRows = [...new Set([...bal.keys(), ...soldByMember.keys()])]
+    .map((id) => ({ id, ...(bal.get(id) ?? { pending: 0n, paid: 0n, delivered: 0n }), sold: soldByMember.get(id) ?? 0n }))
+    .filter((r) => r.pending || r.paid || r.sold)
     .sort((a, b) => (b.pending + b.sold > a.pending + a.sold ? 1 : -1));
+
+  // vault items grouped by name: "Upgrade Scroll — 10 Adet"
+  const groupMap = new Map<string, { label: string; qty: number; value: bigint; mine: number; entries: typeof vaultAll }>();
+  for (const l of vaultAll) {
+    const label = `${l.itemName}${l.plusLevel !== null ? ` +${l.plusLevel}` : ""}`;
+    const g = groupMap.get(label) ?? { label, qty: 0, value: 0n, mine: 0, entries: [] };
+    g.qty += l.quantity;
+    g.value += l.value;
+    if (ownersOf(l).includes(me.id)) g.mine += l.quantity;
+    g.entries.push(l);
+    groupMap.set(label, g);
+  }
+  const groups = [...groupMap.values()].sort((a, b) => b.qty - a.qty || a.label.localeCompare(b.label, "tr"));
 
   const allOpts = users.map((m) => ({ id: m.id, name: m.characterName }));
   const dateFmt = new Intl.DateTimeFormat("tr-TR", { day: "2-digit", month: "2-digit", timeZone: "Europe/Istanbul" });
@@ -116,7 +125,7 @@ export default async function VaultPage({ searchParams }: { searchParams: Search
         title="Clan kasası"
         subtitle={
           <>
-            Kasa hesabı: <b className="text-gold">{treasurer?.characterName ?? "seçilmedi"}</b>. Farm sonrası herkes elindeki Noah ve itemleri bu hesaba teslim eder, kasa herkese payını öder.
+            Kasa hesabı: <b className="text-gold">{treasurer?.characterName ?? "seçilmedi"}</b>. Farmda toplanan Noah ve itemler bu hesaba alınır, kasa herkese payını öder.
           </>
         }
       />
@@ -125,15 +134,140 @@ export default async function VaultPage({ searchParams }: { searchParams: Search
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Clan coini" value={noahShort(clanCoin)} hint="Üyelerin kasadaki alacaklarının toplamı" accent />
         <Stat label="Senin kasadaki alacağın" value={noahShort(myPending + (soldByMember.get(me.id) ?? 0n))} hint={<Link href="/payim" className="text-gold">Detay →</Link>} />
-        <Stat label="Kasadaki itemler (tahmini)" value={noahShort(itemTotal)} hint={`${vaultAll.length} item`} />
+        <Stat label="Kasadaki itemler (tahmini)" value={noahShort(itemTotal)} hint={`${vaultAll.reduce((a, l) => a + l.quantity, 0)} adet`} />
         <Stat label="Satıldı, dağıtım bekliyor" value={noahShort(soldTotal)} hint={`${soldWaiting.length} item`} />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-3">
         <div className="space-y-6 xl:col-span-2">
+          <div className="card overflow-x-auto p-0">
+            <h2 className="px-5 pt-5 font-semibold">Farmlara göre itemler</h2>
+            <p className="px-5 text-xs text-mute">Bir farmın itemlerini görmek için &quot;Itemler&quot; butonuna bas.</p>
+            {itemFarms.length === 0 ? (
+              <div className="p-5"><Empty>Item düşen farm yok.</Empty></div>
+            ) : (
+              <table className="table mt-2">
+                <thead>
+                  <tr>
+                    <th>Farm tarihi</th>
+                    <th>Farm yeri</th>
+                    <th className="text-right">Item</th>
+                    <th className="hidden text-right sm:table-cell">Satıldı</th>
+                    <th className="hidden text-right sm:table-cell">Satış toplamı</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {itemFarms.map((f) => {
+                    const qty = f.loot.reduce((a, l) => a + l.quantity, 0);
+                    const sold = f.loot.filter((l) => l.status === "SOLD");
+                    const soldQty = sold.reduce((a, l) => a + l.quantity, 0);
+                    const soldSum = sold.reduce((a, l) => a + (l.salePrice ?? 0n), 0n);
+                    const fname = `${f.location.name}${f.title ? ` · ${f.title}` : ""}`;
+                    return (
+                      <tr key={f.id}>
+                        <td className="whitespace-nowrap"><LocalTime value={f.startAt} mode="date" /></td>
+                        <td><Link href={`/farms/${f.id}`} className="hover:text-gold">{fname}</Link></td>
+                        <td className="text-right">{qty}</td>
+                        <td className="hidden text-right sm:table-cell">{soldQty > 0 ? <span className="text-green-300">{soldQty}</span> : <span className="text-mute">0</span>}</td>
+                        <td className="hidden text-right text-gold sm:table-cell">{soldSum > 0n ? noahShort(soldSum) : "-"}</td>
+                        <td className="text-right">
+                          <ActionMenu title={<>{fname} · <LocalTime value={f.startAt} mode="date" /></>} label="Itemler" wide>
+                            <div className="overflow-x-auto">
+                              <table className="table text-sm">
+                                <thead>
+                                  <tr>
+                                    <th>Item</th>
+                                    <th className="text-right">Adet</th>
+                                    <th className="text-right">Satış fiyatı</th>
+                                    <th>Durum</th>
+                                    <th className="text-right">Pay</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {f.loot.map((l) => {
+                                    const owners = itemOwners(l, f);
+                                    return (
+                                      <tr key={l.id}>
+                                        <td>{l.itemName}{l.plusLevel !== null && <span className="text-gold"> +{l.plusLevel}</span>}</td>
+                                        <td className="text-right">{l.quantity}</td>
+                                        <td className="whitespace-nowrap text-right">{l.status === "SOLD" ? <span className="text-green-300">{noah(l.salePrice)}</span> : <span className="text-mute">~{noahShort(l.value)}</span>}</td>
+                                        <td>
+                                          {l.status === "SOLD" ? <Badge tone="green">Satıldı</Badge> : l.status === "GIVEN" ? <Badge>Verildi</Badge> : l.inVault ? <Badge tone="orange">Kasada, satılmadı</Badge> : <Badge>Satılmadı</Badge>}
+                                        </td>
+                                        <td className="whitespace-nowrap text-right" title={owners.map(name).join(", ")}>{owners.length} kişi{owners.includes(me.id) && <span className="text-gold"> · sen</span>}</td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </ActionMenu>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          <div className="card overflow-x-auto p-0">
+            <h2 className="px-5 pt-5 font-semibold">Kasadaki itemler ({groups.reduce((a, g) => a + g.qty, 0)} adet)</h2>
+            <p className="px-5 text-xs text-mute">Satılmayı bekleyen itemler. Kimin payı olduğunu görmek için iteme tıkla.</p>
+            {groups.length === 0 ? (
+              <div className="p-5"><Empty>Kasada item yok.</Empty></div>
+            ) : (
+              <table className="table mt-2">
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th className="text-right">Adet</th>
+                    <th className="text-right">Tahmini</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {groups.map((g) => (
+                    <tr key={g.label}>
+                      <td>
+                        <ActionMenu title={`${g.label} · ${g.qty} Adet`} label={g.label} buttonClassName="text-left hover:text-gold underline decoration-dotted underline-offset-4" wide>
+                          <ul className="divide-y divide-line text-sm">
+                            {g.entries.map((l) => {
+                              const owners = ownersOf(l);
+                              return (
+                                <li key={l.id} className="py-2">
+                                  <div className="flex flex-wrap justify-between gap-2">
+                                    <span>
+                                      <b>{l.quantity} Adet</b>
+                                      {l.session && <span className="text-mute"> · {l.session.location.name}{l.session.title ? ` · ${l.session.title}` : ""} · <LocalTime value={l.session.startAt} mode="date" /></span>}
+                                    </span>
+                                    <span className="text-mute">~{noahShort(l.value)} · {owners.length} kişiye pay</span>
+                                  </div>
+                                  <div className="mt-1 text-xs text-mute">
+                                    {owners.map((id) => (
+                                      <span key={id} className={id === me.id ? "text-gold" : ""}>{name(id)}{"  "}</span>
+                                    ))}
+                                  </div>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </ActionMenu>
+                        {g.mine > 0 && <span className="ml-2"><Badge tone="gold">Payın var</Badge></span>}
+                      </td>
+                      <td className="text-right text-gold">{g.qty} Adet</td>
+                      <td className="whitespace-nowrap text-right text-mute">~{noahShort(g.value)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {officer && (
           <div className="card p-0">
             <div className="flex flex-wrap items-center justify-between gap-2 px-5 pt-5">
-              <h2 className="font-semibold">Kasadaki itemler ({vault.length})</h2>
+              <h2 className="font-semibold">Satış ve düzenleme ({vault.length} kayıt)</h2>
               <div className="flex gap-2 text-sm">
                 <Link href="/vault" className={mine ? "btn-ghost btn-sm" : "btn-primary btn-sm"}>Hepsi</Link>
                 <Link href="/vault?benim=1" className={mine ? "btn-primary btn-sm" : "btn-ghost btn-sm"}>Payım olanlar</Link>
@@ -192,7 +326,7 @@ export default async function VaultPage({ searchParams }: { searchParams: Search
                           </td>
                           {officer && (
                             <td>
-                              <input name={`price_${l.id}`} form="bulk-sell" className="input w-28" placeholder="örn. 45m" />
+                              <NoahInput name={`price_${l.id}`} form="bulk-sell" className="input w-28" placeholder="örn. 45m" />
                             </td>
                           )}
                           {officer && (
@@ -201,7 +335,7 @@ export default async function VaultPage({ searchParams }: { searchParams: Search
                                   <form action={sellLoot.bind(null, l.id)} className="space-y-2">
                                     <input type="hidden" name="back" value="/vault" />
                                     <div className="text-xs font-semibold text-mute uppercase">Pazarda satıldı</div>
-                                    <input name="salePrice" className="input" placeholder="Satış fiyatı (örn. 45m)" required />
+                                    <NoahInput name="salePrice" className="input" placeholder="Satış fiyatı (örn. 45m)" required />
                                     <select name="soldById" className="input" defaultValue={l.holderId}>
                                       {allOpts.map((m) => (
                                         <option key={m.id} value={m.id}>Satan: {m.name}</option>
@@ -230,7 +364,7 @@ export default async function VaultPage({ searchParams }: { searchParams: Search
                                   )}
                                   <form action={updateLootValue.bind(null, l.id)} className="flex gap-2 border-t border-line pt-3">
                                     <input type="hidden" name="back" value="/vault" />
-                                    <input name="value" className="input" defaultValue={noah(l.value)} aria-label="Tahmini değer" />
+                                    <NoahInput name="value" className="input" defaultValue={noah(l.value)} aria-label="Tahmini değer" />
                                     <SubmitButton className="btn-ghost btn-sm">Değer</SubmitButton>
                                   </form>
                                   <div className="flex flex-wrap gap-2 border-t border-line pt-3">
@@ -265,6 +399,7 @@ export default async function VaultPage({ searchParams }: { searchParams: Search
               </form>
             )}
           </div>
+          )}
 
           {soldWaiting.length > 0 && (
             <div className="card">
@@ -304,46 +439,6 @@ export default async function VaultPage({ searchParams }: { searchParams: Search
               </ul>
             </div>
           )}
-
-          <div className="card p-0">
-            <h2 className="px-5 pt-5 font-semibold">Kasaya teslimler (kim ne yatırdı)</h2>
-            <p className="px-5 text-sm text-mute">Gün sonu hesaplarından çıkan, üyelerin kasa hesabına teslim etmesi gereken Noah. Bekleyen: {noah(deliveryPending)}</p>
-            {deliveries.length === 0 ? (
-              <div className="p-5"><Empty>Henüz teslim kaydı yok.</Empty></div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="table mt-2">
-                  <thead>
-                    <tr>
-                      <th>Üye</th>
-                      <th>Hesap</th>
-                      <th className="text-right">Tutar</th>
-                      <th>Durum</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {deliveries.map((d) => (
-                      <tr key={d.id}>
-                        <td className={d.fromId === me.id ? "text-gold" : ""}>{d.from.characterName}</td>
-                        <td className="text-sm">
-                          <Link href={`/settlements/${d.settlement.id}`} className="hover:text-gold">{d.settlement.title}</Link>
-                        </td>
-                        <td className="text-right">{noah(d.amount)}</td>
-                        <td>
-                          {d.status === "RECEIVED" ? <Badge tone="green">Teslim edildi</Badge> : <Badge tone="orange">Bekliyor</Badge>}
-                          {officer && (
-                            <form action={setTransferStatus.bind(null, d.id, d.status === "RECEIVED" ? "PENDING" : "RECEIVED", "/vault")} className="mt-1">
-                              <SubmitButton className="btn-ghost btn-sm">{d.status === "RECEIVED" ? "Geri al" : "Teslim aldım"}</SubmitButton>
-                            </form>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
 
           {officer && farmStock.length > 0 && (
             <div className="card p-0">
@@ -386,7 +481,7 @@ export default async function VaultPage({ searchParams }: { searchParams: Search
         <div className="space-y-6">
           <div className="card p-0">
             <h2 className="px-5 pt-5 font-semibold">Üyelerin kasadaki alacakları</h2>
-            <p className="px-5 text-xs text-mute">Ödeme bekliyor: kasanın üyeye ödemesi gereken. Ödendi: kasanın ödediği. Kasaya teslim edecek: üyenin elindeki farm parası.</p>
+            <p className="px-5 text-xs text-mute">Ödeme bekliyor: kasanın üyeye ödemesi gereken. Satıştan gelecek: satılan itemlerden payı. Ödendi: kasanın ödediği.</p>
             {balanceRows.length === 0 ? (
               <div className="p-5"><Empty>Henüz hesap yok.</Empty></div>
             ) : (
@@ -402,7 +497,6 @@ export default async function VaultPage({ searchParams }: { searchParams: Search
                     <tr key={r.id} className={r.id === me.id ? "bg-gold/5" : ""}>
                       <td className={r.id === me.id ? "text-gold" : ""}>{name(r.id)}</td>
                       <td className="space-y-1 text-sm">
-                        {r.owes > 0n && <div><Badge tone="red">Kasaya teslim edecek</Badge> <span className="whitespace-nowrap">{noahShort(r.owes)}</span></div>}
                         {r.pending > 0n && <div><Badge tone="orange">Ödeme bekliyor</Badge> <span className="whitespace-nowrap">{noahShort(r.pending)}</span></div>}
                         {r.sold > 0n && <div><Badge tone="gold">Satıştan gelecek</Badge> <span className="whitespace-nowrap">{noahShort(r.sold)}</span></div>}
                         {r.paid > 0n && <div><Badge tone="green">Ödendi</Badge> <span className="whitespace-nowrap text-mute">{noahShort(r.paid)}</span></div>}
@@ -417,7 +511,7 @@ export default async function VaultPage({ searchParams }: { searchParams: Search
           {officer && (
             <form action={setTreasurer} className="card space-y-2">
               <h2 className="font-semibold">Kasa hesabı</h2>
-              <p className="text-sm text-mute">Clan kasası olarak kullanılan oyuncu. Gün sonu hesaplarında teslim alan üye varsayılan olarak bu olur.</p>
+              <p className="text-sm text-mute">Clan kasası olarak kullanılan oyuncu. Üyelerden toplanan coin ve itemler bu hesaba yazılır.</p>
               <select name="userId" className="input" defaultValue={treasurer?.id ?? ""}>
                 {allOpts.map((m) => (
                   <option key={m.id} value={m.id}>{m.name}</option>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { DateTimeInput, SubmitButton } from "@/components/client";
+import { DateTimeInput, SubmitButton, NoahInput } from "@/components/client";
 
 type Item = { id: string; name: string; category: string; price: string };
 type Member = { id: string; name: string };
@@ -102,7 +102,7 @@ export function LootForm({
       )}
       <div className={isCoin ? "lg:col-span-2" : ""}>
         <label className="label">{isCoin ? "Miktar (Noah)" : "Tahmini değer"}</label>
-        <input
+        <NoahInput
           name="value"
           className="input"
           placeholder={isCoin ? "örn. 150m veya 150.000.000" : suggested !== null ? `${fmt(suggested)} (katalog)` : "örn. 40m"}

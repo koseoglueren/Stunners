@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { SubmitButton } from "@/components/client";
+import { SubmitButton, NoahInput } from "@/components/client";
 import { PlusSelect, hasLevel } from "../farms/LootForm";
 
 type Item = { id: string; name: string; category: string; price: string };
@@ -75,7 +75,7 @@ export function VaultForm({
       </div>
       <div>
         <label className="label">Tahmini değer</label>
-        <input name="value" className="input" placeholder={suggested !== null ? `${fmt(suggested)} (katalog)` : "örn. 40m"} />
+        <NoahInput name="value" className="input" placeholder={suggested !== null ? `${fmt(suggested)} (katalog)` : "örn. 40m"} />
       </div>
       <div>
         <label className="label">Hangi hesapta</label>

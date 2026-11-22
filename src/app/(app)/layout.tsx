@@ -12,7 +12,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <NavLink href="/payim">Payım</NavLink>
       <NavLink href="/farms">Farm oturumları</NavLink>
       <NavLink href="/settlements">Gün sonu hesapları</NavLink>
-      <NavLink href="/transfers">Ödemeler</NavLink>
       <NavLink href="/vault">Clan kasası</NavLink>
       <NavLink href="/reports">Raporlar</NavLink>
       <NavLink href="/members">Üyeler</NavLink>

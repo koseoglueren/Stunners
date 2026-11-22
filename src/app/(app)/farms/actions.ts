@@ -7,6 +7,7 @@ import { prisma } from "@/lib/db";
 import { audit, requireRole } from "@/lib/auth";
 import { categoryLabel, parseNoah } from "@/lib/format";
 import { done, fail, str } from "@/lib/forms";
+import { getTreasurer } from "@/lib/clan";
 
 const CATEGORIES = Object.keys(categoryLabel) as LootCategory[];
 
@@ -419,8 +420,14 @@ export async function collectFromMember(sessionId: string, form: FormData) {
     });
   }
   if (!coin && rows.length === 0) fail(path, "Coin miktarı veya en az bir item gir.");
+  // the coin and items are handed to the clan vault account right away; remember who brought them
+  const vaultUser = (await getTreasurer()) ?? me;
+  for (const r of rows) {
+    r.holderId = vaultUser.id;
+    r.handedOverById = memberId;
+  }
   await prisma.$transaction([
-    ...(coin ? [prisma.lootEntry.create({ data: { sessionId, category: "COIN", itemName: "Noah", quantity: 1, holderId: memberId, value: coin, status: "COIN", droppedAt, note } })] : []),
+    ...(coin ? [prisma.lootEntry.create({ data: { sessionId, category: "COIN", itemName: "Noah", quantity: 1, holderId: vaultUser.id, handedOverById: memberId, value: coin, status: "COIN", droppedAt, note } })] : []),
     ...rows.map((data) => prisma.lootEntry.create({ data })),
   ]);
   await audit(me.id, "collected", `${sessionId} ${memberId}: ${coin ?? 0n} + ${rows.length} item`);

@@ -4,7 +4,7 @@ import { categoryLabel, noah, noahShort } from "@/lib/format";
 import type { SearchParams } from "@/lib/forms";
 import { PageHeader } from "@/components/ui";
 import { Flash } from "@/components/Flash";
-import { ActionMenu, SubmitButton } from "@/components/client";
+import { ActionMenu, SubmitButton, NoahInput } from "@/components/client";
 import { createItem, deleteItem, updateItem } from "./actions";
 
 export const metadata = { title: "Item kataloğu" };
@@ -52,7 +52,7 @@ export default async function ItemsPage({ searchParams }: { searchParams: Search
           <div>
             <label className="label">Piyasa fiyatı (adet)</label>
             <div className="flex gap-2">
-              <input name="price" className="input" placeholder="örn. 5m" />
+              <NoahInput name="price" className="input" placeholder="örn. 5m" />
               <SubmitButton>Ekle</SubmitButton>
             </div>
           </div>
@@ -106,7 +106,7 @@ export default async function ItemsPage({ searchParams }: { searchParams: Search
                                 </div>
                                 <div>
                                   <label className="label">Piyasa fiyatı (adet)</label>
-                                  <input name="price" className="input" defaultValue={noah(i.defaultPrice)} />
+                                  <NoahInput name="price" className="input" defaultValue={noah(i.defaultPrice)} />
                                 </div>
                                 <label className="flex items-center gap-2 text-sm">
                                   <input type="checkbox" name="active" defaultChecked={i.active} className="accent-gold" /> Loot girerken listede göster

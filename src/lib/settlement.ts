@@ -85,21 +85,15 @@ export function computeSettlement(contributions: Contribution[], collectorId: st
 }
 
 /**
- * Everyone hands the Noah they hold to the clan vault member (DELIVERY), who then
- * pays every share out (PAYOUT). Items a member kept are deducted from their payout.
+ * Coin and items are handed to the clan vault account while collecting, so the
+ * vault only has to pay every member their share (PAYOUT). Items a member kept
+ * (legacy "given") are deducted from their payout.
  */
 export function collectorTransfers(shares: ShareRow[], collectorId: string): TransferRow[] {
   const out: TransferRow[] = [];
   for (const s of shares) {
     if (s.userId === collectorId) continue;
-    const cash = s.held - s.kept;
-    let payout = s.share - s.kept;
-    let delivery = cash;
-    if (payout < 0n) {
-      delivery += -payout;
-      payout = 0n;
-    }
-    if (delivery > 0n) out.push({ fromId: s.userId, toId: collectorId, amount: delivery, kind: "DELIVERY" });
+    const payout = s.share - s.kept;
     if (payout > 0n) out.push({ fromId: collectorId, toId: s.userId, amount: payout, kind: "PAYOUT" });
   }
   return out;

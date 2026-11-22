@@ -4,10 +4,10 @@ import { requireRole } from "@/lib/auth";
 import { durationText, lootStatusLabel, noah, noahShort } from "@/lib/format";
 import { first, type SearchParams } from "@/lib/forms";
 import { buildSettlementPreview } from "@/lib/settlement-data";
-import { buildCollectorRows, itemLabel } from "@/lib/collector-report";
+import { itemLabel } from "@/lib/collector-report";
 import { Alert, Badge, Empty, PageHeader, Stat } from "@/components/ui";
 import { Flash } from "@/components/Flash";
-import { CollectorReport } from "@/components/CollectorReport";
+import { ItemSummary, PayoutList } from "@/components/SettlementParts";
 import { LocalTime, SubmitButton } from "@/components/client";
 import { getTreasurer } from "@/lib/clan";
 import { createSettlement } from "../actions";
@@ -20,7 +20,6 @@ export default async function NewSettlementPage({ searchParams }: { searchParams
   const selected = [sp.oturum].flat().filter((x): x is string => !!x);
   const treasurer = await getTreasurer();
   const collectorId = first(sp.dagitici) || treasurer?.id || me.id;
-  const handover = first(sp.teslim) !== "0";
 
   // candidate sessions: anything with loot not yet settled, plus selected ones
   const [candidates, people] = await Promise.all([
@@ -38,16 +37,20 @@ export default async function NewSettlementPage({ searchParams }: { searchParams
     }),
     prisma.user.findMany({ where: { active: true }, orderBy: { characterName: "asc" } }),
   ]);
-  const preview = selected.length ? await buildSettlementPreview(selected, collectorId) : null;
+  const [preview, farmLoot] = selected.length
+    ? await Promise.all([
+        buildSettlementPreview(selected, collectorId),
+        prisma.lootEntry.findMany({ where: { sessionId: { in: selected } }, select: { itemName: true, plusLevel: true, quantity: true, status: true } }),
+      ])
+    : [null, []];
   const name = (id: string) => preview?.users.get(id)?.characterName ?? people.find((p) => p.id === id)?.characterName ?? "?";
-  const handedItems = preview && collectorId && handover ? preview.unsold.filter((l) => l.holderId !== collectorId).map((l) => ({ ...l, handedOverById: l.holderId })) : [];
   const defaultTitle = `Gün sonu ${new Date().toLocaleDateString("tr-TR", { timeZone: "Europe/Istanbul" })}`;
 
   return (
     <>
       <PageHeader
         title="Gün sonu hesabı"
-        subtitle="Günün farmlarını seç. Herkes elindekini kasa hesabına teslim eder, kasa herkese payını öder. Coin farmda geçirilen süreye göre, satılan item ise pay sahiplerine eşit bölünür."
+        subtitle="Günün farmlarını seç. Coin ve itemler farm sırasında kasaya alınır, kasa herkese payını öder. Coin farmda geçirilen süreye göre, satılan item ise pay sahiplerine eşit bölünür."
         actions={<Link href="/settlements" className="btn-ghost">← Hesaplar</Link>}
       />
       <Flash sp={sp} />
@@ -80,11 +83,6 @@ export default async function NewSettlementPage({ searchParams }: { searchParams
                 ))}
               </select>
             </div>
-            <label className="flex items-end gap-2 pb-2 text-sm">
-              <input type="checkbox" name="teslim" value="1" defaultChecked={handover} className="accent-[#d4a64a]" />
-              Satılmayan itemler de kasaya teslim edilsin
-              <input type="hidden" name="teslim" value="0" />
-            </label>
           </div>
         </div>
         <button className="btn-ghost">Hesabı göster</button>
@@ -96,8 +94,7 @@ export default async function NewSettlementPage({ searchParams }: { searchParams
           {preview.active.length > 0 && <Alert>Seçilenlerden {preview.active.length} farm hâlâ devam ediyor. Kilitlemeden önce farmı bitir.</Alert>}
           {preview.unsold.length > 0 && (
             <Alert tone="gold">
-              {preview.unsold.length} item henüz satılmadı (tahmini {noahShort(preview.unsold.reduce((a, l) => a + l.value, 0n))}). Bu hesaba Noah olarak girmez;
-              {handover ? " kasaya teslim edilir," : ""} satılınca aynı farmlar için ek hesap yapılır.
+              {preview.unsold.length} item henüz satılmadı (tahmini {noahShort(preview.unsold.reduce((a, l) => a + l.value, 0n))}). Bu hesaba Noah olarak girmez; kasada kalır, satılınca aynı farmlar için ek hesap yapılır.
             </Alert>
           )}
           <div className="mb-6 grid gap-4 sm:grid-cols-3">
@@ -106,11 +103,10 @@ export default async function NewSettlementPage({ searchParams }: { searchParams
             <Stat label="Ortalama pay" value={noahShort(preview.perShare)} hint="Coin süreye, item pay sahiplerine göre bölünür" />
           </div>
 
-          <CollectorReport
-            rows={buildCollectorRows(collectorId, preview.shares, preview.transfers, preview.included.map((i) => i.loot), handedItems)}
-            collectorId={collectorId}
-            name={name}
-          />
+          <div className="space-y-6">
+            <PayoutList shares={preview.shares} payouts={preview.transfers} collectorId={collectorId} name={name} />
+            <ItemSummary loot={farmLoot} />
+          </div>
 
           <div className="card mt-6">
             <h3 className="mb-2 font-semibold">Hesaba giren kayıtlar ({preview.included.length})</h3>
@@ -118,7 +114,7 @@ export default async function NewSettlementPage({ searchParams }: { searchParams
               {preview.included.map(({ loot, amount, beneficiaries, holderId }) => (
                 <li key={loot.id} className="flex justify-between gap-2">
                   <span>
-                    {itemLabel(loot)} <span className="text-xs text-mute">({lootStatusLabel[loot.status]} · {loot.status === "SOLD" ? "satan" : "getiren"}: <b className="text-ink">{name(holderId)}</b> · {beneficiaries.length} kişiye)</span>
+                    {itemLabel(loot)} <span className="text-xs text-mute">({lootStatusLabel[loot.status]} · {loot.status === "SOLD" ? "satan" : "getiren"}: <b className="text-ink">{name(loot.status === "SOLD" ? holderId : (loot.handedOverById ?? holderId))}</b> · {beneficiaries.length} kişiye)</span>
                   </span>
                   <span>{noah(amount)}</span>
                 </li>
@@ -131,7 +127,7 @@ export default async function NewSettlementPage({ searchParams }: { searchParams
               <input key={id} type="hidden" name="sessionIds" value={id} />
             ))}
             <input type="hidden" name="collectorId" value={collectorId} />
-            {handover && <input type="hidden" name="handover" value="1" />}
+            <input type="hidden" name="handover" value="1" />
             <div className="min-w-64 flex-1">
               <label className="label">Hesap adı</label>
               <input name="title" className="input" defaultValue={defaultTitle} />
