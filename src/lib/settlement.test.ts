@@ -121,3 +121,27 @@ test("sessionEarnings splits coin by minutes and sold items among owners present
   assert.equal(r.perMember.get("a"), 300n);
   assert.equal(r.perMember.get("b"), 100n);
 });
+
+test("planGroupSale: 13 of 20 sold oldest first, price split by units", async () => {
+  const { planGroupSale } = await import("./vault-sale");
+  const parts = planGroupSale(
+    [
+      { id: "a", quantity: 10, value: 1000n },
+      { id: "b", quantity: 5, value: 500n },
+      { id: "c", quantity: 5, value: 500n },
+    ],
+    13,
+    45000n,
+  );
+  assert.deepEqual(parts.map((p) => [p.id, p.sold, p.left]), [["a", 10, 0], ["b", 3, 2]]);
+  assert.equal(parts.reduce((a, p) => a + p.price, 0n), 45000n);
+  assert.equal(parts[0].price, 34615n);
+  assert.equal(parts[1].soldValue, 300n);
+  assert.throws(() => planGroupSale([{ id: "a", quantity: 2, value: 0n }], 3, 1n));
+});
+
+test("vaultKey groups same name and plus regardless of case", async () => {
+  const { vaultKey } = await import("./vault-sale");
+  assert.equal(vaultKey({ itemName: "Mirage Dagger", plusLevel: null }), vaultKey({ itemName: " mirage dagger", plusLevel: null }));
+  assert.notEqual(vaultKey({ itemName: "Mirage Dagger", plusLevel: 7 }), vaultKey({ itemName: "Mirage Dagger", plusLevel: null }));
+});

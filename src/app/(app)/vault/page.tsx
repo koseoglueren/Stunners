@@ -2,15 +2,16 @@ import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { hasRole, requireUser } from "@/lib/auth";
 import { getTreasurer } from "@/lib/clan";
-import { categoryLabel, noah, noahShort } from "@/lib/format";
+import { noah, noahShort } from "@/lib/format";
 import { first, type SearchParams } from "@/lib/forms";
 import { allocate } from "@/lib/settlement";
 import { itemOwners } from "@/lib/shares";
 import { Badge, Empty, PageHeader, Stat } from "@/components/ui";
 import { Flash } from "@/components/Flash";
 import { ActionMenu, LocalTime, SubmitButton, NoahInput } from "@/components/client";
-import { addVaultItem, deleteLoot, resetLootOwners, sellLoot, sellMany, setLootOwners, setLootVault, updateLootValue } from "../farms/actions";
-import { setTreasurer } from "./actions";
+import { addVaultItem, deleteLoot, resetLootOwners, setLootOwners, setLootVault, updateLootValue } from "../farms/actions";
+import { vaultKey } from "@/lib/vault-sale";
+import { sellVaultGroup, setTreasurer } from "./actions";
 import { VaultForm } from "./VaultForm";
 
 export const metadata = { title: "Clan kasası" };
@@ -76,7 +77,6 @@ export default async function VaultPage({ searchParams }: { searchParams: Search
   const nameOf = new Map(users.map((u) => [u.id, u.characterName]));
   const name = (id: string) => nameOf.get(id) ?? "?";
   const ownersOf = (l: (typeof vaultAll)[number] | (typeof soldWaiting)[number]) => itemOwners(l, l.session);
-  const vault = mine ? vaultAll.filter((l) => ownersOf(l).includes(me.id)) : vaultAll;
   const itemTotal = vaultAll.reduce((a, l) => a + l.value, 0n);
 
   // clan coin: what the vault account holds for each member (payouts not done yet)
@@ -99,18 +99,22 @@ export default async function VaultPage({ searchParams }: { searchParams: Search
     .filter((r) => r.pending || r.paid || r.sold)
     .sort((a, b) => (b.pending + b.sold > a.pending + a.sold ? 1 : -1));
 
-  // vault items grouped by name: "Upgrade Scroll — 10 Adet"
-  const groupMap = new Map<string, { label: string; qty: number; value: bigint; mine: number; entries: typeof vaultAll }>();
+  // vault items grouped by name + plus level: "Mirage Dagger — 20 Adet"
+  type Group = { key: string; label: string; qty: number; value: bigint; mine: number; entries: typeof vaultAll };
+  const groupMap = new Map<string, Group>();
   for (const l of vaultAll) {
-    const label = `${l.itemName}${l.plusLevel !== null ? ` +${l.plusLevel}` : ""}`;
-    const g = groupMap.get(label) ?? { label, qty: 0, value: 0n, mine: 0, entries: [] };
+    const key = vaultKey(l);
+    const g = groupMap.get(key) ?? { key, label: `${l.itemName}${l.plusLevel !== null ? ` +${l.plusLevel}` : ""}`, qty: 0, value: 0n, mine: 0, entries: [] };
     g.qty += l.quantity;
     g.value += l.value;
     if (ownersOf(l).includes(me.id)) g.mine += l.quantity;
     g.entries.push(l);
-    groupMap.set(label, g);
+    groupMap.set(key, g);
   }
-  const groups = [...groupMap.values()].sort((a, b) => b.qty - a.qty || a.label.localeCompare(b.label, "tr"));
+  // oldest farm first, the order units are sold in
+  for (const g of groupMap.values()) g.entries.sort((a, b) => a.droppedAt.getTime() - b.droppedAt.getTime());
+  const groups = [...groupMap.values()].sort((a, b) => a.label.localeCompare(b.label, "tr"));
+  const shownGroups = mine ? groups.filter((g) => g.mine > 0) : groups;
 
   const allOpts = users.map((m) => ({ id: m.id, name: m.characterName }));
   const dateFmt = new Intl.DateTimeFormat("tr-TR", { day: "2-digit", month: "2-digit", timeZone: "Europe/Istanbul" });
@@ -212,194 +216,127 @@ export default async function VaultPage({ searchParams }: { searchParams: Search
             )}
           </div>
 
-          <div className="card overflow-x-auto p-0">
-            <h2 className="px-5 pt-5 font-semibold">Kasadaki itemler ({groups.reduce((a, g) => a + g.qty, 0)} adet)</h2>
-            <p className="px-5 text-xs text-mute">Satılmayı bekleyen itemler. Kimin payı olduğunu görmek için iteme tıkla.</p>
-            {groups.length === 0 ? (
-              <div className="p-5"><Empty>Kasada item yok.</Empty></div>
-            ) : (
-              <table className="table mt-2">
-                <thead>
-                  <tr>
-                    <th>Item</th>
-                    <th className="text-right">Adet</th>
-                    <th className="text-right">Tahmini</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {groups.map((g) => (
-                    <tr key={g.label}>
-                      <td>
-                        <ActionMenu title={`${g.label} · ${g.qty} Adet`} label={g.label} buttonClassName="text-left hover:text-gold underline decoration-dotted underline-offset-4" wide>
-                          <ul className="divide-y divide-line text-sm">
-                            {g.entries.map((l) => {
-                              const owners = ownersOf(l);
-                              return (
-                                <li key={l.id} className="py-2">
-                                  <div className="flex flex-wrap justify-between gap-2">
-                                    <span>
-                                      <b>{l.quantity} Adet</b>
-                                      {l.session && <span className="text-mute"> · {l.session.location.name}{l.session.title ? ` · ${l.session.title}` : ""} · <LocalTime value={l.session.startAt} mode="date" /></span>}
-                                    </span>
-                                    <span className="text-mute">~{noahShort(l.value)} · {owners.length} kişiye pay</span>
-                                  </div>
-                                  <div className="mt-1 text-xs text-mute">
-                                    {owners.map((id) => (
-                                      <span key={id} className={id === me.id ? "text-gold" : ""}>{name(id)}{"  "}</span>
-                                    ))}
-                                  </div>
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        </ActionMenu>
-                        {g.mine > 0 && <span className="ml-2"><Badge tone="gold">Payın var</Badge></span>}
-                      </td>
-                      <td className="text-right text-gold">{g.qty} Adet</td>
-                      <td className="whitespace-nowrap text-right text-mute">~{noahShort(g.value)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-
-          {officer && (
           <div className="card p-0">
             <div className="flex flex-wrap items-center justify-between gap-2 px-5 pt-5">
-              <h2 className="font-semibold">Satış ve düzenleme ({vault.length} kayıt)</h2>
+              <h2 className="font-semibold">Kasadaki itemler ({groups.reduce((a, g) => a + g.qty, 0)} adet)</h2>
               <div className="flex gap-2 text-sm">
                 <Link href="/vault" className={mine ? "btn-ghost btn-sm" : "btn-primary btn-sm"}>Hepsi</Link>
                 <Link href="/vault?benim=1" className={mine ? "btn-primary btn-sm" : "btn-ghost btn-sm"}>Payım olanlar</Link>
               </div>
             </div>
-            {vault.length === 0 ? (
+            <p className="px-5 text-xs text-mute">
+              Satılmayı bekleyen itemler, aynı item tek satırda. Kimin payı olduğunu görmek için iteme tıkla.
+              {officer && " Satarken kaç adet sattığını ve toplam fiyatı yaz; kalan adet kasada kalır. Satılan adetler en eski farmdan başlayarak düşülür, para o farmın pay sahiplerine bölünür."}
+            </p>
+            {shownGroups.length === 0 ? (
               <div className="p-5"><Empty>{mine ? "Kasada payın olan item yok." : "Kasada item yok."}</Empty></div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="table mt-2">
                   <thead>
                     <tr>
-                      {officer && <th className="w-8"></th>}
                       <th>Item</th>
-                      <th>Pay sahipleri</th>
+                      <th className="text-right">Kalan</th>
                       <th className="text-right">Tahmini</th>
-                      {officer && <th>Satış fiyatı</th>}
-                      {officer && <th></th>}
+                      {officer && <th>Satış (adet · toplam fiyat)</th>}
                     </tr>
                   </thead>
                   <tbody>
-                    {vault.map((l) => {
-                      const owners = ownersOf(l);
-                      const iOwn = owners.includes(me.id);
-                      const per = owners.length ? l.value / BigInt(owners.length) : 0n;
-                      const choices = [...new Set([...(l.session?.members.map((m) => m.userId) ?? []), ...owners])];
-                      return (
-                        <tr key={l.id}>
-                          {officer && (
-                            <td>
-                              <input type="checkbox" name="sel" value={l.id} form="bulk-sell" className="h-4 w-4 accent-gold" aria-label="Satılanlara ekle" />
-                            </td>
-                          )}
-                          <td>
-                            <div className="font-medium"><ItemName l={l} /></div>
-                            <div className="text-xs text-mute">
-                              {categoryLabel[l.category]} · {l.holder.characterName} hesabında
-                              {l.session && (
-                                <>
-                                  {" · "}
-                                  <Link href={`/farms/${l.sessionId}#pazar`} className="hover:text-gold">{l.session.location.name}</Link>{" "}
-                                  <LocalTime value={l.session.startAt} mode="date" />
-                                </>
-                              )}
-                              {l.note && ` · ${l.note}`}
-                            </div>
-                          </td>
-                          <td className="text-sm">
-                            {iOwn && <Badge tone="gold">Payın var</Badge>}{" "}
-                            <span className="text-xs text-mute">{owners.length} kişi{l.customOwners ? " (düzenlendi)" : ""}:</span>
-                            <div className="max-w-72 text-xs text-mute">{owners.map(name).join(", ")}</div>
-                          </td>
-                          <td className="text-right whitespace-nowrap">
-                            ~{noah(l.value)}
-                            <div className="text-xs text-mute">kişi başı ~{noahShort(per)}</div>
-                          </td>
-                          {officer && (
-                            <td>
-                              <NoahInput name={`price_${l.id}`} form="bulk-sell" className="input w-28" placeholder="örn. 45m" />
-                            </td>
-                          )}
-                          {officer && (
-                            <td className="text-right">
-                              <ActionMenu title={`${l.itemName}${l.plusLevel !== null ? ` +${l.plusLevel}` : ""}${l.quantity > 1 ? ` ×${l.quantity}` : ""}`}>
-                                  <form action={sellLoot.bind(null, l.id)} className="space-y-2">
-                                    <input type="hidden" name="back" value="/vault" />
-                                    <div className="text-xs font-semibold text-mute uppercase">Pazarda satıldı</div>
-                                    <NoahInput name="salePrice" className="input" placeholder="Satış fiyatı (örn. 45m)" required />
-                                    <select name="soldById" className="input" defaultValue={l.holderId}>
-                                      {allOpts.map((m) => (
-                                        <option key={m.id} value={m.id}>Satan: {m.name}</option>
-                                      ))}
-                                    </select>
-                                    <p className="text-xs text-mute">Satış parası {owners.length} pay sahibine eşit bölünür.</p>
-                                    <SubmitButton className="btn-primary btn-sm w-full">Satışı kaydet</SubmitButton>
-                                  </form>
-                                  <form action={setLootOwners.bind(null, l.id)} className="space-y-2 border-t border-line pt-3">
-                                    <input type="hidden" name="back" value="/vault" />
-                                    <div className="text-xs font-semibold text-mute uppercase">Pay sahipleri</div>
-                                    <div className="max-h-40 space-y-1 overflow-y-auto text-sm">
-                                      {choices.map((id) => (
-                                        <label key={id} className="flex items-center gap-2">
-                                          <input type="checkbox" name="ownerIds" value={id} defaultChecked={owners.includes(id)} className="accent-gold" />
-                                          {name(id)}
-                                        </label>
+                    {shownGroups.map((g) => (
+                      <tr key={g.key}>
+                        <td>
+                          <ActionMenu title={`${g.label} · ${g.qty} Adet`} label={g.label} buttonClassName="text-left hover:text-gold underline decoration-dotted underline-offset-4" wide>
+                            <ul className="divide-y divide-line text-sm">
+                              {g.entries.map((l) => {
+                                const owners = ownersOf(l);
+                                const choices = [...new Set([...(l.session?.members.map((m) => m.userId) ?? []), ...owners])];
+                                return (
+                                  <li key={l.id} className="py-2">
+                                    <div className="flex flex-wrap justify-between gap-2">
+                                      <span>
+                                        <b>{l.quantity} Adet</b>
+                                        {l.session ? (
+                                          <span className="text-mute"> · <Link href={`/farms/${l.sessionId}#pazar`} className="hover:text-gold">{l.session.location.name}{l.session.title ? ` · ${l.session.title}` : ""}</Link> · <LocalTime value={l.session.startAt} mode="date" /></span>
+                                        ) : (
+                                          <span className="text-mute"> · elle eklendi</span>
+                                        )}
+                                      </span>
+                                      <span className="text-mute">~{noahShort(l.value)} · {owners.length} kişiye pay{l.customOwners ? " (düzenlendi)" : ""}</span>
+                                    </div>
+                                    <div className="mt-1 text-xs text-mute">
+                                      {l.holder.characterName} hesabında{l.note && ` · ${l.note}`} ·{" "}
+                                      {owners.map((id) => (
+                                        <span key={id} className={id === me.id ? "text-gold" : ""}>{name(id)}{"  "}</span>
                                       ))}
                                     </div>
-                                    <SubmitButton className="btn-ghost btn-sm w-full">Pay sahiplerini kaydet</SubmitButton>
-                                  </form>
-                                  {l.customOwners && (
-                                    <form action={resetLootOwners.bind(null, l.id, "/vault")}>
-                                      <SubmitButton className="btn-ghost btn-sm w-full">Varsayılana dön (farm ekibi)</SubmitButton>
-                                    </form>
-                                  )}
-                                  <form action={updateLootValue.bind(null, l.id)} className="flex gap-2 border-t border-line pt-3">
-                                    <input type="hidden" name="back" value="/vault" />
-                                    <NoahInput name="value" className="input" defaultValue={noah(l.value)} aria-label="Tahmini değer" />
-                                    <SubmitButton className="btn-ghost btn-sm">Değer</SubmitButton>
-                                  </form>
-                                  <div className="flex flex-wrap gap-2 border-t border-line pt-3">
-                                    {l.sessionId && (
-                                      <form action={setLootVault.bind(null, l.id, false, "/vault")}>
-                                        <SubmitButton className="btn-ghost btn-sm">Kasadan çıkar</SubmitButton>
-                                      </form>
+                                    {officer && (
+                                      <details className="mt-2">
+                                        <summary className="cursor-pointer text-xs text-gold">Bu kaydı düzenle</summary>
+                                        <div className="mt-2 space-y-3">
+                                          <form action={setLootOwners.bind(null, l.id)} className="space-y-2">
+                                            <input type="hidden" name="back" value="/vault" />
+                                            <div className="text-xs font-semibold text-mute uppercase">Pay sahipleri</div>
+                                            <div className="max-h-40 space-y-1 overflow-y-auto">
+                                              {choices.map((id) => (
+                                                <label key={id} className="flex items-center gap-2">
+                                                  <input type="checkbox" name="ownerIds" value={id} defaultChecked={owners.includes(id)} className="accent-gold" />
+                                                  {name(id)}
+                                                </label>
+                                              ))}
+                                            </div>
+                                            <SubmitButton className="btn-ghost btn-sm w-full">Pay sahiplerini kaydet</SubmitButton>
+                                          </form>
+                                          {l.customOwners && (
+                                            <form action={resetLootOwners.bind(null, l.id, "/vault")}>
+                                              <SubmitButton className="btn-ghost btn-sm w-full">Varsayılana dön (farm ekibi)</SubmitButton>
+                                            </form>
+                                          )}
+                                          <form action={updateLootValue.bind(null, l.id)} className="flex gap-2 border-t border-line pt-3">
+                                            <input type="hidden" name="back" value="/vault" />
+                                            <NoahInput name="value" className="input" defaultValue={noah(l.value)} aria-label="Tahmini değer" />
+                                            <SubmitButton className="btn-ghost btn-sm">Değer</SubmitButton>
+                                          </form>
+                                          <div className="flex flex-wrap gap-2 border-t border-line pt-3">
+                                            {l.sessionId && (
+                                              <form action={setLootVault.bind(null, l.id, false, "/vault")}>
+                                                <SubmitButton className="btn-ghost btn-sm">Kasadan çıkar</SubmitButton>
+                                              </form>
+                                            )}
+                                            <form action={deleteLoot.bind(null, l.id, "/vault")}>
+                                              <SubmitButton className="btn-danger btn-sm" confirm="Kayıt tamamen silinsin mi?">Sil</SubmitButton>
+                                            </form>
+                                          </div>
+                                        </div>
+                                      </details>
                                     )}
-                                    <form action={deleteLoot.bind(null, l.id, "/vault")}>
-                                      <SubmitButton className="btn-danger btn-sm" confirm="Kayıt tamamen silinsin mi?">Sil</SubmitButton>
-                                    </form>
-                                  </div>
-                              </ActionMenu>
-                            </td>
-                          )}
-                        </tr>
-                      );
-                    })}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </ActionMenu>
+                          {g.mine > 0 && <span className="ml-2"><Badge tone="gold">Payın var</Badge></span>}
+                          {new Set(g.entries.map((e) => e.sessionId)).size > 1 && <div className="text-xs text-mute">{new Set(g.entries.map((e) => e.sessionId)).size} farmdan</div>}
+                        </td>
+                        <td className="whitespace-nowrap text-right text-gold">{g.qty} Adet</td>
+                        <td className="whitespace-nowrap text-right text-mute">~{noahShort(g.value)}</td>
+                        {officer && (
+                          <td>
+                            <form action={sellVaultGroup} className="flex flex-wrap items-center gap-2">
+                              <input type="hidden" name="key" value={g.key} />
+                              <input type="hidden" name="soldById" value={treasurer?.id ?? me.id} />
+                              <input type="number" name="qty" min={1} max={g.qty} defaultValue={g.qty} required className="input w-20" aria-label="Satılan adet" />
+                              <NoahInput name="salePrice" className="input w-32" placeholder="örn. 45000" required aria-label="Toplam satış fiyatı" />
+                              <SubmitButton className="btn-primary btn-sm">Sat</SubmitButton>
+                            </form>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
             )}
-            {officer && vault.length > 0 && (
-              <form id="bulk-sell" action={sellMany} className="flex flex-wrap items-end gap-3 border-t border-line px-5 py-4">
-                <div className="text-sm text-mute sm:flex-1">Satılan itemleri işaretle, her birinin satış fiyatını yaz, sonra kaydet. Para her itemin kendi pay sahiplerine bölünür.</div>
-                <select name="soldById" className="input w-auto" defaultValue={treasurer?.id ?? me.id}>
-                  {allOpts.map((m) => (
-                    <option key={m.id} value={m.id}>Satan: {m.name}</option>
-                  ))}
-                </select>
-                <SubmitButton>Seçilenleri satıldı kaydet</SubmitButton>
-              </form>
-            )}
           </div>
-          )}
 
           {soldWaiting.length > 0 && (
             <div className="card">
