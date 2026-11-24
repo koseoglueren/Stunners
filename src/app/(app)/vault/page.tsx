@@ -11,7 +11,8 @@ import { Flash } from "@/components/Flash";
 import { ActionMenu, LocalTime, SubmitButton, NoahInput } from "@/components/client";
 import { addVaultItem, deleteLoot, resetLootOwners, setLootOwners, setLootVault, updateLootValue } from "../farms/actions";
 import { vaultKey } from "@/lib/vault-sale";
-import { sellVaultGroup, setTreasurer } from "./actions";
+import { distributeSales, sellVaultGroup, setTreasurer } from "./actions";
+import { SaleDistributeForm } from "./SaleDistributeForm";
 import { VaultForm } from "./VaultForm";
 
 export const metadata = { title: "Clan kasası" };
@@ -52,7 +53,7 @@ export default async function VaultPage({ searchParams }: { searchParams: Search
         })
       : [],
     prisma.lootEntry.findMany({
-      where: { status: "SOLD", settlementId: null, sessionId: { not: null } },
+      where: { status: "SOLD", settlementId: null },
       include: { soldBy: true, holder: true, owners: true, session: { include: sessionInclude } },
       orderBy: { soldAt: "desc" },
     }),
@@ -92,7 +93,6 @@ export default async function VaultPage({ searchParams }: { searchParams: Search
   for (const { parts } of soldParts) for (const [id, v] of parts) soldByMember.set(id, (soldByMember.get(id) ?? 0n) + v);
   const clanCoin = [...bal.values()].reduce((a, b) => a + b.pending, 0n);
   const soldTotal = soldWaiting.reduce((a, l) => a + (l.salePrice ?? 0n), 0n);
-  const soldSessions = [...new Set(soldWaiting.map((l) => l.sessionId).filter((x): x is string => !!x))];
   const myPending = bal.get(me.id)?.pending ?? 0n;
   const balanceRows = [...new Set([...bal.keys(), ...soldByMember.keys()])]
     .map((id) => ({ id, ...(bal.get(id) ?? { pending: 0n, paid: 0n, delivered: 0n }), sold: soldByMember.get(id) ?? 0n }))
@@ -340,40 +340,48 @@ export default async function VaultPage({ searchParams }: { searchParams: Search
 
           {soldWaiting.length > 0 && (
             <div className="card">
-              <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-                <h2 className="font-semibold">Satıldı, dağıtım bekliyor</h2>
-                {officer && soldSessions.length > 0 && (
-                  <Link href={`/settlements/new?${soldSessions.map((id) => `oturum=${id}`).join("&")}`} className="btn-primary btn-sm">
-                    Hepsini dağıt
-                  </Link>
-                )}
-              </div>
-              <p className="mb-3 text-sm text-mute">Satış parası itemin pay sahiplerine eşit bölünür. Dağıtım, o farm için yapılan gün sonu hesabıyla (gerekirse ek hesapla) kayda geçer.</p>
-              <ul className="divide-y divide-line text-sm">
-                {soldParts.map(({ l, parts }) => (
-                  <li key={l.id} className="py-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span>
-                        <b><ItemName l={l} /></b>
-                        <span className="text-mute"> · {l.session?.location.name} · satan {l.soldBy?.characterName ?? l.holder.characterName}</span>
-                      </span>
-                      <span className="flex items-center gap-3">
-                        <span className="text-green-300">{noah(l.salePrice)}</span>
-                        {officer && l.sessionId && (
-                          <Link href={`/settlements/new?oturum=${l.sessionId}`} className="btn-primary btn-sm">Dağıtımı yap</Link>
-                        )}
-                      </span>
-                    </div>
-                    <div className="mt-1 text-xs text-mute">
-                      {[...parts].map(([id, v]) => (
-                        <span key={id} className={id === me.id ? "text-gold" : ""}>
-                          {name(id)}: {noahShort(v)}{"  "}
-                        </span>
-                      ))}
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              <h2 className="mb-1 font-semibold">Satıldı, dağıtım bekliyor ({noah(soldTotal)} Noah)</h2>
+              {officer ? (
+                <>
+                  <p className="mb-3 text-sm text-mute">Dağıtmak istediğin satışları ve parayı alacak kişileri seç. Seçilen satışların toplamı seçilen kişilere eşit bölünür.</p>
+                  <SaleDistributeForm
+                    action={distributeSales}
+                    collectorName={treasurer?.characterName ?? me.characterName}
+                    members={allOpts}
+                    sales={soldParts.map(({ l }) => ({
+                      id: l.id,
+                      label: `${l.itemName}${l.plusLevel !== null ? ` +${l.plusLevel}` : ""}${l.quantity > 1 ? ` ×${l.quantity}` : ""}`,
+                      where: `${l.session ? `${l.session.location.name} · ${dateFmt.format(l.session.startAt)}` : "elle eklendi"} · satan ${l.soldBy?.characterName ?? l.holder.characterName}`,
+                      price: (l.salePrice ?? 0n).toString(),
+                      owners: ownersOf(l),
+                    }))}
+                  />
+                </>
+              ) : (
+                <>
+                  <p className="mb-3 text-sm text-mute">Yönetici dağıtımı yapınca payın Payım sayfasında görünür. Aşağıda her satışın pay sahiplerine göre tahmini payı var.</p>
+                  <ul className="divide-y divide-line text-sm">
+                    {soldParts.map(({ l, parts }) => (
+                      <li key={l.id} className="py-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span>
+                            <b><ItemName l={l} /></b>
+                            <span className="text-mute"> · {l.session?.location.name ?? "elle eklendi"}</span>
+                          </span>
+                          <span className="text-green-300">{noah(l.salePrice)}</span>
+                        </div>
+                        <div className="mt-1 text-xs text-mute">
+                          {[...parts].map(([id, v]) => (
+                            <span key={id} className={id === me.id ? "text-gold" : ""}>
+                              {name(id)}: {noahShort(v)}{"  "}
+                            </span>
+                          ))}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
             </div>
           )}
 
