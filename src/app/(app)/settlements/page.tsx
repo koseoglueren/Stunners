@@ -5,7 +5,8 @@ import { noah, noahShort } from "@/lib/format";
 import type { SearchParams } from "@/lib/forms";
 import { Badge, Empty, PageHeader } from "@/components/ui";
 import { Flash } from "@/components/Flash";
-import { LocalTime } from "@/components/client";
+import { LocalTime, SubmitButton } from "@/components/client";
+import { mergeSettlements } from "./actions";
 
 export const metadata = { title: "Gün sonu hesapları" };
 
@@ -22,12 +23,13 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
       _count: { select: { shares: true } },
     },
   });
+  const officer = hasRole(me, "OFFICER");
   return (
     <>
       <PageHeader
         title="Gün sonu hesapları"
-        subtitle="Kilitlenen her hesap, seçilen farmların kazancını katılımcılara eşit böler."
-        actions={hasRole(me, "OFFICER") && <Link href="/settlements/new" className="btn-primary">+ Yeni hesap</Link>}
+        subtitle="Kilitlenen her hesap, seçilen farmların kazancını katılımcılara böler. İki farm ekibi ortak pay alacaksa hesaplarını seçip birleştir."
+        actions={officer && <Link href="/settlements/new" className="btn-primary">+ Yeni hesap</Link>}
       />
       <Flash sp={sp} />
       {list.length === 0 ? (
@@ -37,6 +39,7 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
           <table className="table">
             <thead>
               <tr>
+                {officer && <th className="w-8"></th>}
                 <th>Hesap</th>
                 <th>Tarih</th>
                 <th>Farmlar</th>
@@ -51,6 +54,13 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
                 const open = s.transfers.filter((t) => t.status !== "RECEIVED").length;
                 return (
                   <tr key={s.id} className="hover:bg-panel-2/60">
+                    {officer && (
+                      <td>
+                        {s.sessions.length > 0 && s.transfers.every((t) => t.status === "PENDING") && (
+                          <input type="checkbox" name="sel" value={s.id} form="merge" className="h-4 w-4 accent-gold" aria-label={`${s.title} birleştirmeye dahil`} />
+                        )}
+                      </td>
+                    )}
                     <td><Link href={`/settlements/${s.id}`} className="font-medium hover:text-gold">{s.title}</Link></td>
                     <td className="text-mute"><LocalTime value={s.createdAt} /></td>
                     <td className="text-sm text-mute">{s.sessions.map((x) => x.session.location.name + (x.session.title ? ` (${x.session.title})` : "")).join(", ")}</td>
@@ -63,6 +73,14 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
               })}
             </tbody>
           </table>
+          {officer && (
+            <form id="merge" action={mergeSettlements} className="flex flex-wrap items-center gap-3 border-t border-line px-5 py-4">
+              <div className="text-sm text-mute sm:flex-1">
+                Aynı gün ortak pay alacak farm hesaplarını işaretle. Birleşince tüm coin ve satışlar tek havuzda toplanır ve iki farmdaki herkese eşit bölünür. Sadece ödemesi başlamamış farm hesapları birleştirilebilir.
+              </div>
+              <SubmitButton confirm="Seçilen hesaplar silinip tek birleşik hesap olarak yeniden kilitlensin mi?">Farmları birleştir</SubmitButton>
+            </form>
+          )}
         </div>
       )}
     </>

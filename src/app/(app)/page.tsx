@@ -91,10 +91,23 @@ export default async function Dashboard({ searchParams }: { searchParams: Search
   const top = [...earners].filter(([, a]) => a > 0n).sort((a, b) => (b[1] > a[1] ? 1 : b[1] < a[1] ? -1 : 0)).slice(0, 10);
 
   const scopeTotal = scope.reduce((a, f) => a + f.total, 0n);
-  const drops = scope
-    .flatMap((f) => f.s.loot.filter((l) => l.status !== "COIN").map((l) => ({ l, s: f.s })))
-    .sort((a, b) => b.l.droppedAt.getTime() - a.l.droppedAt.getTime())
-    .slice(0, 12);
+  // dropped items, the same item (name + plus) on one line: total count, who brought how many
+  type Drop = { key: string; name: string; plus: number | null; qty: number; sold: number; last: Date; farms: Map<string, (typeof scope)[number]["s"]>; by: Map<string, number> };
+  const dropMap = new Map<string, Drop>();
+  for (const f of scope)
+    for (const l of f.s.loot) {
+      if (l.status === "COIN") continue;
+      const key = `${l.itemName.trim().toLocaleLowerCase("tr")}|${l.plusLevel ?? ""}`;
+      const d = dropMap.get(key) ?? { key, name: l.itemName, plus: l.plusLevel, qty: 0, sold: 0, last: l.droppedAt, farms: new Map(), by: new Map() };
+      d.qty += l.quantity;
+      if (l.status === "SOLD") d.sold += l.quantity;
+      if (l.droppedAt > d.last) d.last = l.droppedAt;
+      d.farms.set(f.s.id, f.s);
+      const who = (l.handedOverBy ?? l.holder).characterName;
+      d.by.set(who, (d.by.get(who) ?? 0) + l.quantity);
+      dropMap.set(key, d);
+    }
+  const drops = [...dropMap.values()].sort((a, b) => b.last.getTime() - a.last.getTime()).slice(0, 15);
   const vault = await prisma.lootEntry.findMany({
     where: { status: "IN_STOCK", inVault: true, ...(selected ? { sessionId: selected.s.id } : {}) },
     select: { itemName: true, plusLevel: true, quantity: true, status: true, value: true },
@@ -254,17 +267,25 @@ export default async function Dashboard({ searchParams }: { searchParams: Search
                 </tr>
               </thead>
               <tbody>
-                {drops.map(({ l, s }) => (
-                  <tr key={l.id}>
+                {drops.map((d) => (
+                  <tr key={d.key}>
                     <td>
-                      {l.itemName}
-                      {l.plusLevel !== null && <span className="text-gold"> +{l.plusLevel}</span>}
-                      {l.status === "SOLD" && <span className="text-xs text-green-300"> · satıldı</span>}
+                      {d.name}
+                      {d.plus !== null && <span className="text-gold"> +{d.plus}</span>}
+                      {d.sold > 0 && <span className="text-xs text-green-300"> · {d.sold === d.qty ? "satıldı" : `${d.sold} satıldı`}</span>}
                     </td>
-                    <td className="text-right">{l.quantity}</td>
-                    <td><Link href={`/farms/${s.id}`} className="text-mute hover:text-gold">{farmName(s)}</Link></td>
-                    <td>{(l.handedOverBy ?? l.holder).characterName}</td>
-                    <td className="whitespace-nowrap text-right text-mute"><LocalTime value={l.droppedAt} /></td>
+                    <td className="text-right text-gold">{d.qty}</td>
+                    <td className="text-mute">
+                      {[...d.farms.values()].map((s, i) => (
+                        <span key={s.id}>{i > 0 && ", "}<Link href={`/farms/${s.id}`} className="hover:text-gold">{farmName(s)}</Link></span>
+                      ))}
+                    </td>
+                    <td>
+                      {[...d.by].sort((a, b) => b[1] - a[1]).map(([who, n], i) => (
+                        <span key={who} className="whitespace-nowrap">{i > 0 && ", "}{who} <span className="text-gold">{n}</span></span>
+                      ))}
+                    </td>
+                    <td className="whitespace-nowrap text-right text-mute"><LocalTime value={d.last} /></td>
                   </tr>
                 ))}
               </tbody>

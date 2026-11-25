@@ -3,8 +3,11 @@ import { prisma } from "./db";
 import { computeSettlement, lootContribution } from "./settlement";
 import { lootBeneficiaries } from "./shares";
 
-/** Loads sessions + their unsettled loot and computes who gets what. */
-export async function buildSettlementPreview(sessionIds: string[], collectorId: string) {
+/**
+ * Loads sessions + their unsettled loot and computes who gets what.
+ * merged = the farms' teams pool everything: every member of any selected farm gets an equal part.
+ */
+export async function buildSettlementPreview(sessionIds: string[], collectorId: string, merged = false) {
   const sessions = await prisma.farmSession.findMany({
     where: { id: { in: sessionIds } },
     include: {
@@ -19,12 +22,13 @@ export async function buildSettlementPreview(sessionIds: string[], collectorId: 
   });
   const users = new Map<string, { id: string; characterName: string }>();
   for (const s of sessions) for (const m of s.members) users.set(m.userId, m.user);
+  const pool = [...new Set(sessions.flatMap((s) => s.members.map((m) => m.userId)))].map((userId) => ({ userId, weight: 1n }));
   const included = sessions.flatMap((s) =>
     s.loot.flatMap((l) => {
       const c = lootContribution(l);
       if (!c) return [];
       for (const o of l.owners) users.set(o.userId, o.user);
-      return [{ loot: l, ...c, beneficiaries: lootBeneficiaries(l, s) }];
+      return [{ loot: l, ...c, beneficiaries: merged ? pool : lootBeneficiaries(l, s) }];
     }),
   );
   for (const l of included) {
