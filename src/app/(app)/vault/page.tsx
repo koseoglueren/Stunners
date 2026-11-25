@@ -353,7 +353,7 @@ export default async function VaultPage({ searchParams }: { searchParams: Search
                       key: vaultKey(l),
                       label: `${l.itemName}${l.plusLevel !== null ? ` +${l.plusLevel}` : ""}`,
                       qty: l.quantity,
-                      where: l.session ? `${l.session.location.name} · ${dateFmt.format(l.session.startAt)}` : "elle eklendi",
+                      where: l.session ? `${l.session.location.name}${l.session.title ? ` · ${l.session.title}` : ""} · ${dateFmt.format(l.session.startAt)}` : "elle eklendi",
                       price: (l.salePrice ?? 0n).toString(),
                       owners: ownersOf(l),
                     }))}
@@ -368,7 +368,7 @@ export default async function VaultPage({ searchParams }: { searchParams: Search
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <span>
                             <b><ItemName l={l} /></b>
-                            <span className="text-mute"> · {l.session?.location.name ?? "elle eklendi"}</span>
+                            <span className="text-mute"> · {l.session ? `${l.session.location.name}${l.session.title ? ` · ${l.session.title}` : ""}` : "elle eklendi"}</span>
                           </span>
                           <span className="text-green-300">{noah(l.salePrice)}</span>
                         </div>

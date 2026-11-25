@@ -69,7 +69,7 @@ export default async function SettlementPage({ params, searchParams }: { params:
       <Flash sp={sp} />
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
         <Stat label="Toplam" value={noahShort(st.total)} hint={`${noah(st.total)} Noah`} accent />
-        <Stat label="Ortalama pay" value={noahShort(st.perShare)} hint={st.sessions.length ? "Coin süreye, item pay sahiplerine göre" : "Seçilen kişilere eşit"} />
+        <Stat label="Ortalama pay" value={noahShort(st.perShare)} hint={!st.sessions.length || st.title.startsWith("Birleşik") ? "Herkese eşit" : "Coin süreye, item pay sahiplerine göre"} />
         <Stat label="Katılımcı" value={shares.filter((s) => s.share > 0n).length} />
       </div>
 

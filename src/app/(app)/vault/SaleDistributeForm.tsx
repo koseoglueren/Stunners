@@ -4,18 +4,18 @@ import { useMemo, useState } from "react";
 import { SubmitButton } from "@/components/client";
 
 type Sale = { id: string; key: string; label: string; qty: number; where: string; price: string; owners: string[] };
-type Group = { key: string; label: string; qty: number; price: bigint; ids: string[]; owners: string[]; where: string[] };
+type Group = { key: string; label: string; qty: number; price: bigint; ids: string[]; owners: string[]; where: Map<string, number> };
 
 /** same item (name + plus level) on one line: total count and total money */
 function groupSales(sales: Sale[]): Group[] {
   const map = new Map<string, Group>();
   for (const s of sales) {
-    const g = map.get(s.key) ?? { key: s.key, label: s.label, qty: 0, price: 0n, ids: [], owners: [], where: [] };
+    const g = map.get(s.key) ?? { key: s.key, label: s.label, qty: 0, price: 0n, ids: [], owners: [], where: new Map<string, number>() };
     g.qty += s.qty;
     g.price += BigInt(s.price);
     g.ids.push(s.id);
     for (const o of s.owners) if (!g.owners.includes(o)) g.owners.push(o);
-    if (!g.where.includes(s.where)) g.where.push(s.where);
+    g.where.set(s.where, (g.where.get(s.where) ?? 0) + s.qty);
     map.set(s.key, g);
   }
   return [...map.values()].sort((a, b) => a.label.localeCompare(b.label, "tr"));
@@ -84,7 +84,12 @@ export function SaleDistributeForm({
                 {on && g.ids.map((id) => <input key={id} type="hidden" name="sel" value={id} />)}
                 <span className="flex-1">
                   <b>{g.label}</b> <span className="text-gold">{g.qty} Adet</span>
-                  <span className="text-mute"> · {g.where.join(", ")}</span>
+                  <div className="text-xs text-mute">
+                    Farm:{" "}
+                    {[...g.where].map(([w, n], i) => (
+                      <span key={w} className="whitespace-nowrap">{i > 0 && " · "}{w} <span className="text-gold">{n} adet</span></span>
+                    ))}
+                  </div>
                   <div className="text-xs text-mute">Pay sahipleri: {g.owners.map((id) => nameOf.get(id) ?? "?").join(", ") || "-"}</div>
                 </span>
                 <span className="whitespace-nowrap text-green-300">{fmt(g.price)}</span>

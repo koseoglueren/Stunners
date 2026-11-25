@@ -20,6 +20,7 @@ export default async function NewSettlementPage({ searchParams }: { searchParams
   const selected = [sp.oturum].flat().filter((x): x is string => !!x);
   const treasurer = await getTreasurer();
   const collectorId = first(sp.dagitici) || treasurer?.id || me.id;
+  const merged = first(sp.birlestir) === "1";
 
   // candidate sessions: anything with loot not yet settled, plus selected ones
   const [candidates, people] = await Promise.all([
@@ -39,12 +40,12 @@ export default async function NewSettlementPage({ searchParams }: { searchParams
   ]);
   const [preview, farmLoot] = selected.length
     ? await Promise.all([
-        buildSettlementPreview(selected, collectorId),
+        buildSettlementPreview(selected, collectorId, merged),
         prisma.lootEntry.findMany({ where: { sessionId: { in: selected } }, select: { itemName: true, plusLevel: true, quantity: true, status: true } }),
       ])
     : [null, []];
   const name = (id: string) => preview?.users.get(id)?.characterName ?? people.find((p) => p.id === id)?.characterName ?? "?";
-  const defaultTitle = `Gün sonu ${new Date().toLocaleDateString("tr-TR", { timeZone: "Europe/Istanbul" })}`;
+  const defaultTitle = `${merged ? "Birleşik gün sonu" : "Gün sonu"} ${new Date().toLocaleDateString("tr-TR", { timeZone: "Europe/Istanbul" })}`;
 
   return (
     <>
@@ -85,6 +86,13 @@ export default async function NewSettlementPage({ searchParams }: { searchParams
             </div>
           </div>
         </div>
+        <label className="flex items-start gap-2 text-sm">
+          <input type="checkbox" name="birlestir" value="1" defaultChecked={merged} className="mt-1 accent-[#d4a64a]" />
+          <span>
+            <b>Farmları birleştir (ortak havuz)</b>
+            <span className="block text-mute">Seçilen farmların tüm kazancı tek havuzda toplanır ve bu farmlardaki herkese eşit bölünür (süre ve item pay sahipleri dikkate alınmaz).</span>
+          </span>
+        </label>
         <button className="btn-ghost">Hesabı göster</button>
       </form>
 
@@ -100,7 +108,7 @@ export default async function NewSettlementPage({ searchParams }: { searchParams
           <div className="mb-6 grid gap-4 sm:grid-cols-3">
             <Stat label="Toplam" value={noahShort(preview.total)} hint={`${noah(preview.total)} Noah`} accent />
             <Stat label="Kişi sayısı" value={new Set(preview.sessions.flatMap((x) => x.members.map((m) => m.userId))).size} />
-            <Stat label="Ortalama pay" value={noahShort(preview.perShare)} hint="Coin süreye, item pay sahiplerine göre bölünür" />
+            <Stat label="Ortalama pay" value={noahShort(preview.perShare)} hint={merged ? "Birleşik: herkese eşit" : "Coin süreye, item pay sahiplerine göre bölünür"} />
           </div>
 
           <div className="space-y-6">
@@ -127,6 +135,7 @@ export default async function NewSettlementPage({ searchParams }: { searchParams
               <input key={id} type="hidden" name="sessionIds" value={id} />
             ))}
             <input type="hidden" name="collectorId" value={collectorId} />
+            {merged && <input type="hidden" name="merged" value="1" />}
             <input type="hidden" name="handover" value="1" />
             <div className="min-w-64 flex-1">
               <label className="label">Hesap adı</label>
