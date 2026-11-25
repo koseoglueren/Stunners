@@ -69,16 +69,17 @@ export default async function SettlementPage({ params, searchParams }: { params:
       <Flash sp={sp} />
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
         <Stat label="Toplam" value={noahShort(st.total)} hint={`${noah(st.total)} Noah`} accent />
-        <Stat label="Ortalama pay" value={noahShort(st.perShare)} hint="Coin süreye, item pay sahiplerine göre" />
+        <Stat label="Ortalama pay" value={noahShort(st.perShare)} hint={st.sessions.length ? "Coin süreye, item pay sahiplerine göre" : "Seçilen kişilere eşit"} />
         <Stat label="Katılımcı" value={shares.filter((s) => s.share > 0n).length} />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-3">
         <div className="space-y-6 xl:col-span-2">
           <PayoutList shares={shares} payouts={payouts} collectorId={collectorId} name={name} live={{ me: me.id, officer: hasRole(me, "OFFICER"), backTo: path }} />
-          <ItemSummary loot={farmLoot} />
+          {st.sessions.length > 0 && <ItemSummary loot={farmLoot} />}
         </div>
         <div className="space-y-6">
+          {st.sessions.length > 0 && (
           <div className="card">
             <h2 className="mb-2 font-semibold">Farmlar</h2>
             <ul className="space-y-1 text-sm">
@@ -90,6 +91,7 @@ export default async function SettlementPage({ params, searchParams }: { params:
               ))}
             </ul>
           </div>
+          )}
           <div className="card">
             <h2 className="mb-2 font-semibold">Hesaba giren kayıtlar ({st.loot.length})</h2>
             <ul className="max-h-72 space-y-1 overflow-y-auto text-sm">

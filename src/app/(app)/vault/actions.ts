@@ -1,6 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { getTreasurer } from "@/lib/clan";
+import { computeSettlement, lootContribution } from "@/lib/settlement";
 import { prisma } from "@/lib/db";
 import { audit, requireRole } from "@/lib/auth";
 import { done, fail, str } from "@/lib/forms";
@@ -84,4 +87,56 @@ export async function sellVaultGroup(form: FormData) {
   revalidatePath("/vault");
   for (const sid of new Set(rows.map((r) => r.sessionId).filter(Boolean))) revalidatePath(`/farms/${sid}`);
   done("/vault", `${label}: ${qty} adet ${noah(price)} Noah'a satıldı. Kasada ${left} adet kaldı.`);
+}
+
+/**
+ * Pooled distribution of sold vault items: the money of the selected sales is added up
+ * and split equally among the selected members. Recorded as a locked day-end settlement
+ * (without farms, so the farms stay editable); the vault account pays each member.
+ */
+export async function distributeSales(form: FormData) {
+  const me = await requireRole("OFFICER");
+  const saleIds = [...new Set(form.getAll("sel").map(String).filter(Boolean))];
+  const memberIds = [...new Set(form.getAll("memberIds").map(String).filter(Boolean))];
+  if (saleIds.length === 0) fail("/vault", "Dağıtılacak en az bir satış seç.");
+  if (memberIds.length === 0) fail("/vault", "Dağıtılacak en az bir kişi seç.");
+  const treasurer = await getTreasurer();
+  const collectorId = treasurer?.id ?? me.id;
+
+  const sales = await prisma.lootEntry.findMany({ where: { id: { in: saleIds }, status: "SOLD", settlementId: null } });
+  if (sales.length !== saleIds.length) fail("/vault", "Seçilen satışlardan biri zaten dağıtılmış ya da satılmamış; sayfayı yenile.");
+  const members = await prisma.user.count({ where: { id: { in: memberIds } } });
+  if (members !== memberIds.length) fail("/vault", "Seçilen üyelerden biri bulunamadı.");
+
+  const beneficiaries = memberIds.map((userId) => ({ userId, weight: 1n }));
+  const p = computeSettlement(
+    sales.map((l) => ({ ...lootContribution(l)!, beneficiaries })),
+    collectorId,
+  );
+  const title = `Satış dağıtımı ${new Date().toLocaleDateString("tr-TR", { timeZone: "Europe/Istanbul" })}`;
+  const st = await prisma.$transaction(async (tx) => {
+    const settlement = await tx.settlement.create({
+      data: {
+        title,
+        status: "LOCKED",
+        mode: "COLLECTOR",
+        collectorId,
+        total: p.total,
+        perShare: p.perShare,
+        remainder: p.remainder,
+        createdById: me.id,
+        lockedAt: new Date(),
+        shares: { create: p.shares.map((s) => ({ userId: s.userId, share: s.share, held: s.held, kept: s.kept, balance: s.balance })) },
+        transfers: { create: p.transfers.map((t) => ({ fromId: t.fromId, toId: t.toId, amount: t.amount, kind: t.kind })) },
+      },
+    });
+    const n = await tx.lootEntry.updateMany({ where: { id: { in: saleIds }, settlementId: null }, data: { settlementId: settlement.id } });
+    if (n.count !== saleIds.length) throw new Error("Satışlar başka bir hesapta dağıtıldı, sayfayı yenile.");
+    return settlement;
+  });
+  await audit(me.id, "sales_distributed", `${title}: ${p.total} / ${memberIds.length} kişi`);
+  revalidatePath("/vault");
+  revalidatePath("/settlements");
+  revalidatePath("/payim");
+  redirect(`/settlements/${st.id}`);
 }
