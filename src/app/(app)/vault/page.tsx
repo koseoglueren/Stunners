@@ -350,8 +350,10 @@ export default async function VaultPage({ searchParams }: { searchParams: Search
                     members={allOpts}
                     sales={soldParts.map(({ l }) => ({
                       id: l.id,
-                      label: `${l.itemName}${l.plusLevel !== null ? ` +${l.plusLevel}` : ""}${l.quantity > 1 ? ` ×${l.quantity}` : ""}`,
-                      where: `${l.session ? `${l.session.location.name} · ${dateFmt.format(l.session.startAt)}` : "elle eklendi"} · satan ${l.soldBy?.characterName ?? l.holder.characterName}`,
+                      key: vaultKey(l),
+                      label: `${l.itemName}${l.plusLevel !== null ? ` +${l.plusLevel}` : ""}`,
+                      qty: l.quantity,
+                      where: l.session ? `${l.session.location.name} · ${dateFmt.format(l.session.startAt)}` : "elle eklendi",
                       price: (l.salePrice ?? 0n).toString(),
                       owners: ownersOf(l),
                     }))}

@@ -3,7 +3,23 @@
 import { useMemo, useState } from "react";
 import { SubmitButton } from "@/components/client";
 
-type Sale = { id: string; label: string; where: string; price: string; owners: string[] };
+type Sale = { id: string; key: string; label: string; qty: number; where: string; price: string; owners: string[] };
+type Group = { key: string; label: string; qty: number; price: bigint; ids: string[]; owners: string[]; where: string[] };
+
+/** same item (name + plus level) on one line: total count and total money */
+function groupSales(sales: Sale[]): Group[] {
+  const map = new Map<string, Group>();
+  for (const s of sales) {
+    const g = map.get(s.key) ?? { key: s.key, label: s.label, qty: 0, price: 0n, ids: [], owners: [], where: [] };
+    g.qty += s.qty;
+    g.price += BigInt(s.price);
+    g.ids.push(s.id);
+    for (const o of s.owners) if (!g.owners.includes(o)) g.owners.push(o);
+    if (!g.where.includes(s.where)) g.where.push(s.where);
+    map.set(s.key, g);
+  }
+  return [...map.values()].sort((a, b) => a.label.localeCompare(b.label, "tr"));
+}
 type Member = { id: string; name: string };
 
 const fmt = (n: bigint) => n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
@@ -26,6 +42,7 @@ export function SaleDistributeForm({
   const total = useMemo(() => sales.filter((s) => picked.has(s.id)).reduce((a, s) => a + BigInt(s.price), 0n), [sales, picked]);
   const per = people.size ? total / BigInt(people.size) : 0n;
   const nameOf = new Map(members.map((m) => [m.id, m.name]));
+  const groups = useMemo(() => groupSales(sales), [sales]);
   // members with a share in a sold item come first, then everyone else
   const owners = [...new Set(sales.flatMap((s) => s.owners))];
   const listed = [...owners.map((id) => ({ id, name: nameOf.get(id) ?? "?" })), ...members.filter((m) => !owners.includes(m.id))];
@@ -49,24 +66,31 @@ export function SaleDistributeForm({
           </span>
         </div>
         <ul className="divide-y divide-line text-sm">
-          {sales.map((s) => (
-            <li key={s.id} className="flex items-start gap-3 py-2">
-              <input
-                type="checkbox"
-                name="sel"
-                value={s.id}
-                checked={picked.has(s.id)}
-                onChange={() => setPicked(toggle(picked, s.id))}
-                className="mt-1 h-4 w-4 accent-gold"
-                aria-label={`${s.label} dağıtıma dahil`}
-              />
-              <span className="flex-1">
-                <b>{s.label}</b> <span className="text-mute">· {s.where}</span>
-                <div className="text-xs text-mute">Pay sahipleri: {s.owners.map((id) => nameOf.get(id) ?? "?").join(", ") || "-"}</div>
-              </span>
-              <span className="whitespace-nowrap text-green-300">{fmt(BigInt(s.price))}</span>
-            </li>
-          ))}
+          {groups.map((g) => {
+            const on = g.ids.every((id) => picked.has(id));
+            return (
+              <li key={g.key} className="flex items-start gap-3 py-2">
+                <input
+                  type="checkbox"
+                  checked={on}
+                  onChange={() => {
+                    const next = new Set(picked);
+                    for (const id of g.ids) if (on) next.delete(id); else next.add(id);
+                    setPicked(next);
+                  }}
+                  className="mt-1 h-4 w-4 accent-gold"
+                  aria-label={`${g.label} dağıtıma dahil`}
+                />
+                {on && g.ids.map((id) => <input key={id} type="hidden" name="sel" value={id} />)}
+                <span className="flex-1">
+                  <b>{g.label}</b> <span className="text-gold">{g.qty} Adet</span>
+                  <span className="text-mute"> · {g.where.join(", ")}</span>
+                  <div className="text-xs text-mute">Pay sahipleri: {g.owners.map((id) => nameOf.get(id) ?? "?").join(", ") || "-"}</div>
+                </span>
+                <span className="whitespace-nowrap text-green-300">{fmt(g.price)}</span>
+              </li>
+            );
+          })}
         </ul>
       </div>
 
